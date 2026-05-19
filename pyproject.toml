@@ -1,0 +1,10 @@
+[project]
+name = "mandrop"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "jax>=0.10.0",
+    "matplotlib>=3.10.9",
+]
