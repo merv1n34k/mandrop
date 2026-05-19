@@ -8,3 +8,14 @@ wheels/
 
 # Virtual environments
 .venv
+
+# OS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+
+# Screenshots
+*.jpg
+*.png

@@ -1,10 +1,20 @@
 [project]
 name = "mandrop"
 version = "0.1.0"
-description = "Add your description here"
+description = "LBM simulation for water-in-oil droplet generation"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "jax>=0.10.0",
     "matplotlib>=3.10.9",
 ]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mandrop"]
+
+[project.scripts]
+mandrop = "mandrop:main"
