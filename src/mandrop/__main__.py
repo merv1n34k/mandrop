@@ -6,21 +6,10 @@ import time
 
 import jax
 import jax.numpy as jnp
-from jax import jit, lax
+from jax import lax
 import matplotlib.pyplot as plt
 
-jax.config.update("jax_enable_x64", True)
-
-# ---------------------------------------------------------------------------
-# D2Q9 lattice
-# ---------------------------------------------------------------------------
-w = jnp.array([4 / 9, 1 / 9, 1 / 9, 1 / 9, 1 / 9, 1 / 36, 1 / 36, 1 / 36, 1 / 36])
-ex = [0, 1, 0, -1, 0, 1, -1, -1, 1]
-ey = [0, 0, 1, 0, -1, 1, 1, -1, -1]
-opp = [0, 3, 4, 1, 2, 7, 8, 5, 6]
-cs2 = 1.0 / 3.0
-ex_jnp = jnp.array(ex, dtype=jnp.float64)
-ey_jnp = jnp.array(ey, dtype=jnp.float64)
+from mandrop.engine import setup, make_step, feq_fn, ex_jnp, ey_jnp
 
 # ---------------------------------------------------------------------------
 # Parameters
@@ -29,207 +18,35 @@ Nx, Ny = 200, 600
 R = 50.0
 W = 3.0
 sigma = 0.01
-beta = 3.0 * sigma / W
-kappa = 6.0 * sigma * W
 rho0 = 1.0
 nu = 1.0 / 6.0
-tau_f = 3.0 * nu + 0.5
 M_ch = 0.01
 drho = 0.001
-rho_in = rho0 + drho / 2.0
-rho_out = rho0 - drho / 2.0
-
-# ---------------------------------------------------------------------------
-# Phi initialization: 3 droplets
-# ---------------------------------------------------------------------------
-x = jnp.arange(Nx, dtype=jnp.float64)
-y = jnp.arange(Ny, dtype=jnp.float64)
-X, Y = jnp.meshgrid(x, y, indexing="ij")
-xc = Nx / 2.0
 droplet_centers = [150.0, 300.0, 450.0]
-
-phi0 = jnp.ones((Nx, Ny))
-for yc_d in droplet_centers:
-    r = jnp.sqrt((X - xc) ** 2 + (Y - yc_d) ** 2)
-    phi0 = jnp.minimum(phi0, 0.5 * (1.0 + jnp.tanh((r - R) / (2.0 * W))))
-
-# ---------------------------------------------------------------------------
-# Walls and boundary conditions
-# ---------------------------------------------------------------------------
-wall = jnp.zeros((Nx, Ny), dtype=bool)
-wall = wall.at[0, :].set(True)
-wall = wall.at[-1, :].set(True)
-
-fluid = ~wall
-interior = fluid & (jnp.arange(Ny)[None, :] > 0) & (jnp.arange(Ny)[None, :] < Ny - 1)
-opp_jnp = jnp.array(opp)
-
-inlet_width = int(0.4 * Nx)
-inlet_x0 = Nx // 2 - inlet_width // 2
-inlet_x1 = Nx // 2 + inlet_width // 2
-inlet_water = jnp.zeros(Nx, dtype=bool).at[inlet_x0:inlet_x1].set(True)
-phi_inlet = jnp.where(inlet_water, 0.0, 1.0)
-
-
-@jit
-def apply_bounce_back(f):
-    return jnp.where(wall[..., None], f[:, :, opp_jnp], f)
-
-
-@jit
-def apply_phi_walls(phi):
-    phi = jnp.where(wall, 1.0, phi)
-    phi = phi.at[:, -1].set(phi_inlet)
-    phi = phi.at[:, 0].set(phi[:, 1])
-    return phi
-
-
-@jit
-def zou_he_inlet(f, rho_target):
-    rho_t = rho_target
-    f_top = f[1:-1, -1, :]
-    uy_t = -1.0 + (f_top[:, 0] + f_top[:, 1] + f_top[:, 3]
-                    + 2.0 * (f_top[:, 2] + f_top[:, 5] + f_top[:, 6])) / rho_t
-    f = f.at[1:-1, -1, 4].set(f_top[:, 2] - (2.0 / 3.0) * rho_t * uy_t)
-    f = f.at[1:-1, -1, 7].set(f_top[:, 5] + 0.5 * (f_top[:, 1] - f_top[:, 3]) - (1.0 / 6.0) * rho_t * uy_t)
-    f = f.at[1:-1, -1, 8].set(f_top[:, 6] - 0.5 * (f_top[:, 1] - f_top[:, 3]) - (1.0 / 6.0) * rho_t * uy_t)
-    return f
-
-
-@jit
-def zou_he_outlet(f, rho_target):
-    rho_t = rho_target
-    f_bot = f[1:-1, 0, :]
-    uy_t = 1.0 - (f_bot[:, 0] + f_bot[:, 1] + f_bot[:, 3]
-                   + 2.0 * (f_bot[:, 4] + f_bot[:, 7] + f_bot[:, 8])) / rho_t
-    f = f.at[1:-1, 0, 2].set(f_bot[:, 4] + (2.0 / 3.0) * rho_t * uy_t)
-    f = f.at[1:-1, 0, 5].set(f_bot[:, 7] - 0.5 * (f_bot[:, 1] - f_bot[:, 3]) + (1.0 / 6.0) * rho_t * uy_t)
-    f = f.at[1:-1, 0, 6].set(f_bot[:, 8] + 0.5 * (f_bot[:, 1] - f_bot[:, 3]) + (1.0 / 6.0) * rho_t * uy_t)
-    return f
-
-
-# ---------------------------------------------------------------------------
-# Core operators
-# ---------------------------------------------------------------------------
-@jit
-def compute_laplacian(field):
-    lap = jnp.zeros_like(field)
-    for i in range(1, 9):
-        lap += w[i] * jnp.roll(jnp.roll(field, -ex[i], axis=0), -ey[i], axis=1)
-    return (2.0 / cs2) * (lap - (1.0 - w[0]) * field)
-
-
-@jit
-def compute_gradient(field):
-    gx = jnp.zeros_like(field)
-    gy = jnp.zeros_like(field)
-    for i in range(1, 9):
-        shifted = jnp.roll(jnp.roll(field, -ex[i], axis=0), -ey[i], axis=1)
-        gx += w[i] * ex[i] * shifted
-        gy += w[i] * ey[i] * shifted
-    return gx / cs2, gy / cs2
-
-
-@jit
-def compute_divergence(Fx, Fy):
-    div = jnp.zeros_like(Fx)
-    for i in range(1, 9):
-        sx = jnp.roll(jnp.roll(Fx, -ex[i], axis=0), -ey[i], axis=1)
-        sy = jnp.roll(jnp.roll(Fy, -ex[i], axis=0), -ey[i], axis=1)
-        div += w[i] * (ex[i] * sx + ey[i] * sy)
-    return div / cs2
-
-
-@jit
-def chem_potential(phi, lap_phi):
-    return 2.0 * beta * phi * (1.0 - phi) * (1.0 - 2.0 * phi) - kappa * lap_phi
-
-
-@jit
-def feq_fn(rho, ux, uy):
-    eu = ux[..., None] * ex_jnp + uy[..., None] * ey_jnp
-    usq = ux ** 2 + uy ** 2
-    return w * rho[..., None] * (1.0 + eu / cs2 + eu ** 2 / (2.0 * cs2 ** 2) - usq[..., None] / (2.0 * cs2))
-
-
-@jit
-def forcing_guo(ux, uy, Fx, Fy):
-    eu = ux[..., None] * ex_jnp + uy[..., None] * ey_jnp
-    return (1.0 - 0.5 / tau_f) * w * (
-        (ex_jnp - ux[..., None]) * Fx[..., None] / cs2
-        + (ey_jnp - uy[..., None]) * Fy[..., None] / cs2
-        + eu / cs2 ** 2 * (ex_jnp * Fx[..., None] + ey_jnp * Fy[..., None])
-    )
-
-
-@jit
-def stream(f):
-    return jnp.stack(
-        [jnp.roll(jnp.roll(f[..., i], ex[i], axis=0), ey[i], axis=1) for i in range(9)],
-        axis=-1,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Step function
-# ---------------------------------------------------------------------------
-@jit
-def step(state):
-    f, phi = state
-
-    phi = apply_phi_walls(phi)
-    phi = jnp.clip(phi, 0.0, 1.0)
-
-    lap_phi = compute_laplacian(phi)
-    gx, gy = compute_gradient(phi)
-    mu = chem_potential(phi, lap_phi)
-
-    Fx = mu * gx
-    Fy = mu * gy
-    Fx = Fx.at[:, 0].set(0.0).at[:, -1].set(0.0)
-    Fy = Fy.at[:, 0].set(0.0).at[:, -1].set(0.0)
-
-    rho = jnp.sum(f, axis=-1)
-    ux = (jnp.sum(f * ex_jnp, axis=-1) + 0.5 * Fx) / rho
-    uy = (jnp.sum(f * ey_jnp, axis=-1) + 0.5 * Fy) / rho
-    ux = jnp.where(wall, 0.0, ux)
-    uy = jnp.where(wall, 0.0, uy)
-
-    feq = feq_fn(rho, ux, uy)
-    Fi = forcing_guo(ux, uy, Fx, Fy)
-    f_collided = f - (f - feq) / tau_f + Fi
-    f = jnp.where(fluid[..., None], f_collided, f)
-
-    f = stream(f)
-    f = apply_bounce_back(f)
-    f = zou_he_inlet(f, rho_in)
-    f = zou_he_outlet(f, rho_out)
-
-    lap_mu = compute_laplacian(mu)
-    div_flux = compute_divergence(phi * ux, phi * uy)
-    ch_update = -div_flux + M_ch * lap_mu
-    phi = phi + jnp.where(interior, ch_update, 0.0)
-
-    phi = apply_phi_walls(phi)
-    phi = jnp.clip(phi, 0.0, 1.0)
-    return (f, phi)
 
 
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 def main():
+    cfg = setup(Nx, Ny, R, W, sigma, rho0, nu, M_ch, drho, droplet_centers)
+    step, apply_phi_walls = make_step(
+        cfg["wall"], cfg["fluid"], cfg["interior"], cfg["phi_inlet"], cfg["opp_jnp"],
+        cfg["tau_f"], cfg["beta"], cfg["kappa"], cfg["M_ch"],
+        cfg["rho_in"], cfg["rho_out"],
+    )
+
     print(f"mandrop — LBM droplet simulation")
     print(f"JAX {jax.__version__}, devices: {jax.devices()}")
     print(f"Domain: {Nx}×{Ny}, 3 droplets R={R:.0f}, inlet: center 40% water")
-    print(f"Δρ={drho}, tau={tau_f}")
+    print(f"Δρ={drho}, tau={cfg['tau_f']}")
 
     # Init
     rho_init = jnp.ones((Nx, Ny)) * rho0
     ux0 = jnp.zeros((Nx, Ny))
     uy0 = jnp.zeros((Nx, Ny))
     f0 = feq_fn(rho_init, ux0, uy0)
-    phi0_box = apply_phi_walls(phi0)
+    phi0_box = apply_phi_walls(cfg["phi0"])
 
     # JIT warmup
     print("Compiling (JIT warmup)...", end=" ", flush=True)
@@ -291,6 +108,8 @@ def main():
     total_steps = 0
     t_start = time.time()
     t_chunk = t_start
+    interior = cfg["interior"]
+    wall = cfg["wall"]
 
     print(f"\nRunning... Press Escape or Ctrl+C to stop.\n")
     print(f"{'step':>8} | {'MLUPS':>8} | {'max|u|':>10} | {'phi_min':>10} {'phi_max':>10} | {'droplets':>8}")
