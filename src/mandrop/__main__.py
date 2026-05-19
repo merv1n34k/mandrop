@@ -9,7 +9,7 @@ import jax.numpy as jnp
 from jax import lax
 import matplotlib.pyplot as plt
 
-from mandrop.engine import setup, make_step, feq_fn, ex_jnp, ey_jnp
+from mandrop.engine import make_step, feq_fn, ex_jnp, ey_jnp, opp
 
 # ---------------------------------------------------------------------------
 # Parameters
@@ -18,10 +18,15 @@ Nx, Ny = 200, 600
 R = 50.0
 W = 3.0
 sigma = 0.01
+beta = 3.0 * sigma / W
+kappa = 6.0 * sigma * W
 rho0 = 1.0
 nu = 1.0 / 6.0
+tau_f = 3.0 * nu + 0.5
 M_ch = 0.01
 drho = 0.001
+rho_in = rho0 + drho / 2.0
+rho_out = rho0 - drho / 2.0
 droplet_centers = [150.0, 300.0, 450.0]
 
 
@@ -29,24 +34,48 @@ droplet_centers = [150.0, 300.0, 450.0]
 # Main entry point
 # ---------------------------------------------------------------------------
 def main():
-    cfg = setup(Nx, Ny, R, W, sigma, rho0, nu, M_ch, drho, droplet_centers)
+    # Phi initialization: 3 droplets
+    x = jnp.arange(Nx, dtype=jnp.float64)
+    y = jnp.arange(Ny, dtype=jnp.float64)
+    X, Y = jnp.meshgrid(x, y, indexing="ij")
+    xc = Nx / 2.0
+
+    phi0 = jnp.ones((Nx, Ny))
+    for yc_d in droplet_centers:
+        r = jnp.sqrt((X - xc) ** 2 + (Y - yc_d) ** 2)
+        phi0 = jnp.minimum(phi0, 0.5 * (1.0 + jnp.tanh((r - R) / (2.0 * W))))
+
+    # Walls and boundary conditions
+    wall = jnp.zeros((Nx, Ny), dtype=bool)
+    wall = wall.at[0, :].set(True)
+    wall = wall.at[-1, :].set(True)
+
+    fluid = ~wall
+    interior = fluid & (jnp.arange(Ny)[None, :] > 0) & (jnp.arange(Ny)[None, :] < Ny - 1)
+    opp_jnp = jnp.array(opp)
+
+    inlet_width = int(0.4 * Nx)
+    inlet_x0 = Nx // 2 - inlet_width // 2
+    inlet_x1 = Nx // 2 + inlet_width // 2
+    inlet_water = jnp.zeros(Nx, dtype=bool).at[inlet_x0:inlet_x1].set(True)
+    phi_inlet = jnp.where(inlet_water, 0.0, 1.0)
+
     step, apply_phi_walls = make_step(
-        cfg["wall"], cfg["fluid"], cfg["interior"], cfg["phi_inlet"], cfg["opp_jnp"],
-        cfg["tau_f"], cfg["beta"], cfg["kappa"], cfg["M_ch"],
-        cfg["rho_in"], cfg["rho_out"],
+        wall, fluid, interior, phi_inlet, opp_jnp,
+        tau_f, beta, kappa, M_ch, rho_in, rho_out,
     )
 
     print(f"mandrop — LBM droplet simulation")
     print(f"JAX {jax.__version__}, devices: {jax.devices()}")
     print(f"Domain: {Nx}×{Ny}, 3 droplets R={R:.0f}, inlet: center 40% water")
-    print(f"Δρ={drho}, tau={cfg['tau_f']}")
+    print(f"Δρ={drho}, tau={tau_f}")
 
     # Init
     rho_init = jnp.ones((Nx, Ny)) * rho0
     ux0 = jnp.zeros((Nx, Ny))
     uy0 = jnp.zeros((Nx, Ny))
     f0 = feq_fn(rho_init, ux0, uy0)
-    phi0_box = apply_phi_walls(cfg["phi0"])
+    phi0_box = apply_phi_walls(phi0)
 
     # JIT warmup
     print("Compiling (JIT warmup)...", end=" ", flush=True)
@@ -108,8 +137,6 @@ def main():
     total_steps = 0
     t_start = time.time()
     t_chunk = t_start
-    interior = cfg["interior"]
-    wall = cfg["wall"]
 
     print(f"\nRunning... Press Escape or Ctrl+C to stop.\n")
     print(f"{'step':>8} | {'MLUPS':>8} | {'max|u|':>10} | {'phi_min':>10} {'phi_max':>10} | {'droplets':>8}")

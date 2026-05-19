@@ -18,49 +18,6 @@ ex_jnp = jnp.array(ex, dtype=jnp.float64)
 ey_jnp = jnp.array(ey, dtype=jnp.float64)
 
 
-def setup(Nx, Ny, R, W, sigma, rho0, nu, M_ch, drho, droplet_centers):
-    beta = 3.0 * sigma / W
-    kappa = 6.0 * sigma * W
-    tau_f = 3.0 * nu + 0.5
-    rho_in = rho0 + drho / 2.0
-    rho_out = rho0 - drho / 2.0
-
-    # Phi initialization
-    x = jnp.arange(Nx, dtype=jnp.float64)
-    y = jnp.arange(Ny, dtype=jnp.float64)
-    X, Y = jnp.meshgrid(x, y, indexing="ij")
-    xc = Nx / 2.0
-
-    phi0 = jnp.ones((Nx, Ny))
-    for yc_d in droplet_centers:
-        r = jnp.sqrt((X - xc) ** 2 + (Y - yc_d) ** 2)
-        phi0 = jnp.minimum(phi0, 0.5 * (1.0 + jnp.tanh((r - R) / (2.0 * W))))
-
-    # Walls
-    wall = jnp.zeros((Nx, Ny), dtype=bool)
-    wall = wall.at[0, :].set(True)
-    wall = wall.at[-1, :].set(True)
-
-    fluid = ~wall
-    interior = fluid & (jnp.arange(Ny)[None, :] > 0) & (jnp.arange(Ny)[None, :] < Ny - 1)
-    opp_jnp = jnp.array(opp)
-
-    # Inlet strip
-    inlet_width = int(0.4 * Nx)
-    inlet_x0 = Nx // 2 - inlet_width // 2
-    inlet_x1 = Nx // 2 + inlet_width // 2
-    inlet_water = jnp.zeros(Nx, dtype=bool).at[inlet_x0:inlet_x1].set(True)
-    phi_inlet = jnp.where(inlet_water, 0.0, 1.0)
-
-    return dict(
-        phi0=phi0, wall=wall, fluid=fluid, interior=interior,
-        phi_inlet=phi_inlet, opp_jnp=opp_jnp,
-        tau_f=tau_f, beta=beta, kappa=kappa, M_ch=M_ch,
-        rho_in=rho_in, rho_out=rho_out, rho0=rho0,
-        Nx=Nx, Ny=Ny,
-    )
-
-
 # ---------------------------------------------------------------------------
 # JIT-compiled operators (lattice-only, no geometry dependence)
 # ---------------------------------------------------------------------------
