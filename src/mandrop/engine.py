@@ -81,6 +81,54 @@ def zou_he_outlet(f, rho_target):
     return f
 
 
+def zou_he_top(f, x_start, x_end, rho_target):
+    """Pressure BC at y=Ny-1, x in [x_start, x_end). Flow enters in -y."""
+    rho_t = rho_target
+    f_s = f[x_start:x_end, -1, :]
+    uy_t = -1.0 + (f_s[:, 0] + f_s[:, 1] + f_s[:, 3]
+                    + 2.0 * (f_s[:, 2] + f_s[:, 5] + f_s[:, 6])) / rho_t
+    f = f.at[x_start:x_end, -1, 4].set(f_s[:, 2] - (2.0 / 3.0) * rho_t * uy_t)
+    f = f.at[x_start:x_end, -1, 7].set(f_s[:, 5] + 0.5 * (f_s[:, 1] - f_s[:, 3]) - (1.0 / 6.0) * rho_t * uy_t)
+    f = f.at[x_start:x_end, -1, 8].set(f_s[:, 6] - 0.5 * (f_s[:, 1] - f_s[:, 3]) - (1.0 / 6.0) * rho_t * uy_t)
+    return f
+
+
+def zou_he_bottom(f, x_start, x_end, rho_target):
+    """Pressure BC at y=0, x in [x_start, x_end). Flow exits in -y."""
+    rho_t = rho_target
+    f_s = f[x_start:x_end, 0, :]
+    uy_t = 1.0 - (f_s[:, 0] + f_s[:, 1] + f_s[:, 3]
+                   + 2.0 * (f_s[:, 4] + f_s[:, 7] + f_s[:, 8])) / rho_t
+    f = f.at[x_start:x_end, 0, 2].set(f_s[:, 4] + (2.0 / 3.0) * rho_t * uy_t)
+    f = f.at[x_start:x_end, 0, 5].set(f_s[:, 7] - 0.5 * (f_s[:, 1] - f_s[:, 3]) + (1.0 / 6.0) * rho_t * uy_t)
+    f = f.at[x_start:x_end, 0, 6].set(f_s[:, 8] + 0.5 * (f_s[:, 1] - f_s[:, 3]) + (1.0 / 6.0) * rho_t * uy_t)
+    return f
+
+
+def zou_he_left(f, y_start, y_end, rho_target):
+    """Pressure BC at x=0, y in [y_start, y_end). Flow enters in +x."""
+    rho_t = rho_target
+    f_s = f[0, y_start:y_end, :]
+    ux_t = 1.0 - (f_s[:, 0] + f_s[:, 2] + f_s[:, 4]
+                   + 2.0 * (f_s[:, 3] + f_s[:, 6] + f_s[:, 7])) / rho_t
+    f = f.at[0, y_start:y_end, 1].set(f_s[:, 3] + (2.0 / 3.0) * rho_t * ux_t)
+    f = f.at[0, y_start:y_end, 5].set(f_s[:, 7] - 0.5 * (f_s[:, 2] - f_s[:, 4]) + (1.0 / 6.0) * rho_t * ux_t)
+    f = f.at[0, y_start:y_end, 8].set(f_s[:, 6] + 0.5 * (f_s[:, 2] - f_s[:, 4]) + (1.0 / 6.0) * rho_t * ux_t)
+    return f
+
+
+def zou_he_right(f, y_start, y_end, rho_target):
+    """Pressure BC at x=Nx-1, y in [y_start, y_end). Flow enters in -x."""
+    rho_t = rho_target
+    f_s = f[-1, y_start:y_end, :]
+    ux_t = -1.0 + (f_s[:, 0] + f_s[:, 2] + f_s[:, 4]
+                    + 2.0 * (f_s[:, 1] + f_s[:, 5] + f_s[:, 8])) / rho_t
+    f = f.at[-1, y_start:y_end, 3].set(f_s[:, 1] + (2.0 / 3.0) * rho_t * ux_t)
+    f = f.at[-1, y_start:y_end, 6].set(f_s[:, 5] - 0.5 * (f_s[:, 2] - f_s[:, 4]) - (1.0 / 6.0) * rho_t * ux_t)  # note: ux_t is negative
+    f = f.at[-1, y_start:y_end, 7].set(f_s[:, 8] + 0.5 * (f_s[:, 2] - f_s[:, 4]) - (1.0 / 6.0) * rho_t * ux_t)
+    return f
+
+
 @jit
 def stream(f):
     return jnp.stack(
@@ -92,19 +140,13 @@ def stream(f):
 # ---------------------------------------------------------------------------
 # Step factory — closes over geometry + physical parameters
 # ---------------------------------------------------------------------------
-def make_step(wall, fluid, interior, phi_inlet, opp_jnp,
-              tau_f, beta, kappa, M_ch, rho_in, rho_out):
+def make_step(wall, fluid, interior, opp_jnp,
+              tau_f, beta, kappa, M_ch,
+              apply_f_bcs, apply_phi_bcs, boundary_mask):
 
     @jit
     def apply_bounce_back(f):
         return jnp.where(wall[..., None], f[:, :, opp_jnp], f)
-
-    @jit
-    def apply_phi_walls(phi):
-        phi = jnp.where(wall, 1.0, phi)
-        phi = phi.at[:, -1].set(phi_inlet)
-        phi = phi.at[:, 0].set(phi[:, 1])
-        return phi
 
     @jit
     def chem_potential(phi, lap_phi):
@@ -123,7 +165,7 @@ def make_step(wall, fluid, interior, phi_inlet, opp_jnp,
     def step(state):
         f, phi = state
 
-        phi = apply_phi_walls(phi)
+        phi = apply_phi_bcs(phi)
         phi = jnp.clip(phi, 0.0, 1.0)
 
         lap_phi = compute_laplacian(phi)
@@ -132,8 +174,8 @@ def make_step(wall, fluid, interior, phi_inlet, opp_jnp,
 
         Fx = mu * gx
         Fy = mu * gy
-        Fx = Fx.at[:, 0].set(0.0).at[:, -1].set(0.0)
-        Fy = Fy.at[:, 0].set(0.0).at[:, -1].set(0.0)
+        Fx = jnp.where(boundary_mask, 0.0, Fx)
+        Fy = jnp.where(boundary_mask, 0.0, Fy)
 
         rho = jnp.sum(f, axis=-1)
         ux = (jnp.sum(f * ex_jnp, axis=-1) + 0.5 * Fx) / rho
@@ -148,16 +190,15 @@ def make_step(wall, fluid, interior, phi_inlet, opp_jnp,
 
         f = stream(f)
         f = apply_bounce_back(f)
-        f = zou_he_inlet(f, rho_in)
-        f = zou_he_outlet(f, rho_out)
+        f = apply_f_bcs(f)
 
         lap_mu = compute_laplacian(mu)
         div_flux = compute_divergence(phi * ux, phi * uy)
         ch_update = -div_flux + M_ch * lap_mu
         phi = phi + jnp.where(interior, ch_update, 0.0)
 
-        phi = apply_phi_walls(phi)
+        phi = apply_phi_bcs(phi)
         phi = jnp.clip(phi, 0.0, 1.0)
         return (f, phi)
 
-    return step, apply_phi_walls
+    return step

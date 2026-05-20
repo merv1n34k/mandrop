@@ -9,7 +9,11 @@ import jax.numpy as jnp
 from jax import lax
 import matplotlib.pyplot as plt
 
-from mandrop.engine import make_step, feq_fn, ex_jnp, ey_jnp, opp
+from mandrop.engine import (
+    make_step, feq_fn, ex_jnp, ey_jnp, opp,
+    zou_he_top, zou_he_bottom,
+)
+from jax import jit
 
 # ---------------------------------------------------------------------------
 # Parameters
@@ -60,9 +64,25 @@ def main():
     inlet_water = jnp.zeros(Nx, dtype=bool).at[inlet_x0:inlet_x1].set(True)
     phi_inlet = jnp.where(inlet_water, 0.0, 1.0)
 
-    step, apply_phi_walls = make_step(
-        wall, fluid, interior, phi_inlet, opp_jnp,
-        tau_f, beta, kappa, M_ch, rho_in, rho_out,
+    @jit
+    def apply_f_bcs(f):
+        f = zou_he_top(f, 1, Nx - 1, rho_in)
+        f = zou_he_bottom(f, 1, Nx - 1, rho_out)
+        return f
+
+    @jit
+    def apply_phi_bcs(phi):
+        phi = jnp.where(wall, 1.0, phi)
+        phi = phi.at[:, -1].set(phi_inlet)
+        phi = phi.at[:, 0].set(phi[:, 1])
+        return phi
+
+    boundary_mask = (jnp.arange(Ny)[None, :] == 0) | (jnp.arange(Ny)[None, :] == Ny - 1)
+
+    step = make_step(
+        wall, fluid, interior, opp_jnp,
+        tau_f, beta, kappa, M_ch,
+        apply_f_bcs, apply_phi_bcs, boundary_mask,
     )
 
     print(f"mandrop — LBM droplet simulation")
@@ -75,7 +95,7 @@ def main():
     ux0 = jnp.zeros((Nx, Ny))
     uy0 = jnp.zeros((Nx, Ny))
     f0 = feq_fn(rho_init, ux0, uy0)
-    phi0_box = apply_phi_walls(phi0)
+    phi0_box = apply_phi_bcs(phi0)
 
     # JIT warmup
     print("Compiling (JIT warmup)...", end=" ", flush=True)
