@@ -39,6 +39,9 @@ Y_TOP_MM        = 0.8900
 
 def setup(
     resolution_um=2.5,
+    outlet_extra_mm=0.0,
+    n_seed_droplets=0,
+    droplet_diameter_mm=0.075,
     rho_in_water=1.0005,
     rho_in_oil=1.0005,
     rho_out=0.9995,
@@ -49,6 +52,11 @@ def setup(
         resolution_um: physical size of one lattice unit, in µm.
                        Default 2.5 → 50-node channel, 123×357 domain.
                        1.0 → 125-node channel, ~308×892 domain (4× finer).
+        outlet_extra_mm: extra outlet channel length below the throat (mm).
+                       0.0 keeps DXF default (0.3575 mm). 0.3575 doubles it.
+        n_seed_droplets: number of water droplets to seed in the outlet channel
+                       (evenly spaced along y, centered on the channel midline).
+        droplet_diameter_mm: diameter of seed droplets (mm).
     """
     dx_mm = resolution_um / 1000.0
     nodes_per_mm = 1.0 / dx_mm
@@ -66,14 +74,14 @@ def setup(
     X_CHAN_R   = x_node(X_CHAN_R_MM)
     X_OUTER_R  = x_node(X_OUTER_R_MM)
 
-    Y_OUTLET_TOP = y_node(Y_OUTLET_TOP_MM)
-    Y_THROAT_BOT = y_node(Y_THROAT_BOT_MM)
-    Y_THROAT_TOP = y_node(Y_THROAT_TOP_MM)
-    Y_LSLOT_BOT  = y_node(Y_LSLOT_BOT_MM)
-    Y_LSLOT_TOP  = y_node(Y_LSLOT_TOP_MM)
-    Y_USLOT_BOT  = y_node(Y_USLOT_BOT_MM)
-    Y_USLOT_TOP  = y_node(Y_USLOT_TOP_MM)
-    Y_TOP        = y_node(Y_TOP_MM)
+    Y_OUTLET_TOP = y_node(Y_OUTLET_TOP_MM + outlet_extra_mm)
+    Y_THROAT_BOT = y_node(Y_THROAT_BOT_MM + outlet_extra_mm)
+    Y_THROAT_TOP = y_node(Y_THROAT_TOP_MM + outlet_extra_mm)
+    Y_LSLOT_BOT  = y_node(Y_LSLOT_BOT_MM  + outlet_extra_mm)
+    Y_LSLOT_TOP  = y_node(Y_LSLOT_TOP_MM  + outlet_extra_mm)
+    Y_USLOT_BOT  = y_node(Y_USLOT_BOT_MM  + outlet_extra_mm)
+    Y_USLOT_TOP  = y_node(Y_USLOT_TOP_MM  + outlet_extra_mm)
+    Y_TOP        = y_node(Y_TOP_MM        + outlet_extra_mm)
 
     x_off = -X_OUTER_L
     Nx = X_OUTER_R - X_OUTER_L + 1
@@ -152,6 +160,19 @@ def setup(
     water_prefill = water_prefill.at[gxL+1:gxR, Y_USLOT_TOP:].set(True)
     water_prefill = water_prefill.at[:, Y_USLOT_BOT:Y_USLOT_TOP].set(True)
     water_prefill = water_prefill.at[gxL+1:gxR, Y_LSLOT_TOP:Y_USLOT_BOT].set(True)
+
+    if n_seed_droplets > 0:
+        r_lu = max(1, int(round(0.5 * droplet_diameter_mm * nodes_per_mm)))
+        spacing = int(round(2.5 * r_lu))   # center-to-center = 2.5 × radius
+        cx = x_off
+        y0 = Y_OUTLET_TOP // 2 - (n_seed_droplets - 1) * spacing // 2
+        xx = jnp.arange(Nx)[:, None]
+        yy = jnp.arange(Ny)[None, :]
+        for i in range(n_seed_droplets):
+            cy = y0 + i * spacing
+            disk = (xx - cx) ** 2 + (yy - cy) ** 2 <= r_lu ** 2
+            water_prefill = water_prefill | disk
+
     water_prefill = water_prefill & fluid
 
     params = dict(

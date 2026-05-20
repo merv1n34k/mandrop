@@ -13,7 +13,10 @@ from mandrop.run import run
 # ---------------------------------------------------------------------------
 # Parameters
 # ---------------------------------------------------------------------------
-RESOLUTION_UM = 1.0     # µm per lattice unit (1.0 → 125-node channel, 308×892 domain)
+RESOLUTION_UM     = 1.0      # µm per lattice unit
+OUTLET_EXTRA_MM   = 0.3575   # extend outlet by this much below the DXF default (= 2× original)
+N_SEED_DROPLETS   = 3        # seed N water droplets in the outlet at startup
+DROPLET_DIAMETER_MM = 0.120  # 120 µm droplets (≈ channel width)
 
 W = 3.0
 sigma = 0.01
@@ -23,7 +26,8 @@ rho0 = 1.0
 nu = 1.0 / 6.0
 tau_f = 3.0 * nu + 0.5
 M_ch = 0.01
-drho = 0.001
+drho = 0.001            # base oil inlet excess pressure (relative to outlet)
+WATER_FACTOR = 3.0      # water inlet excess pressure = WATER_FACTOR × oil excess
 
 
 # ---------------------------------------------------------------------------
@@ -31,10 +35,13 @@ drho = 0.001
 # ---------------------------------------------------------------------------
 def main():
     geo = setup(
-        resolution_um=RESOLUTION_UM,
-        rho_in_water=rho0 + drho / 2.0,
-        rho_in_oil=rho0 + drho / 2.0,
-        rho_out=rho0 - drho / 2.0,
+        resolution_um    =RESOLUTION_UM,
+        outlet_extra_mm  =OUTLET_EXTRA_MM,
+        n_seed_droplets  =N_SEED_DROPLETS,
+        droplet_diameter_mm=DROPLET_DIAMETER_MM,
+        rho_in_water=rho0 + WATER_FACTOR * drho / 2.0,
+        rho_in_oil  =rho0 + drho / 2.0,
+        rho_out     =rho0 - drho / 2.0,
     )
     p = geo["params"]
     Nx, Ny = p["Nx"], p["Ny"]
