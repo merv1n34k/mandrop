@@ -14,25 +14,45 @@ from mandrop.run import run
 # Parameters
 # ---------------------------------------------------------------------------
 RESOLUTION_UM     = 1.0      # µm per lattice unit
-OUTLET_EXTRA_MM   = 0.3575   # extend outlet by this much below the DXF default (= 2× original)
+OUTLET_EXTRA_MM   = 0.3575   # extend outlet by this much below the DXF default
 
-W = 4.0
-SIGMA_EQ    = 0.025     # equilibrium IFT (γ_eq, with full surfactant coverage)
-SIGMA_CLEAN = 0.025     # DIAGNOSTIC: disable Stage 3 effect (σ_clean == σ_eq → constant σ)
-TAU_ADS_LU  = 2000.0    # adsorption timescale (lattice steps); tune empirically
-D_GAMMA     = 0.001     # small bulk diffusion for Gamma stability
-rho0 = 1.0
-nu = 1.0 / 6.0
+# ── Physical chip operating point (real units) ──────────────────────────────
+NU_PHYS      = 1e-6       # m²/s (water kinematic viscosity)
+RHO_PHYS     = 1000.0     # kg/m³
+U_OIL_PHYS   = 0.32       # m/s per oil inlet (150 µL/min ÷ 77.5×100 µm)
+U_TOP_PHYS   = 0.053      # m/s central water (40 µL/min ÷ 125×100 µm)
+U_SIDE_PHYS  = 0.043      # m/s per side water (20 µL/min ÷ 77.5×100 µm)
+SIGMA_EQ_PHYS    = 5e-3   # N/m equilibrium IFT (HFE-7500 + 2% PicoSurf)
+SIGMA_CLEAN_PHYS = 5e-3   # N/m bare IFT (set equal to σ_eq for now; raise to ~50e-3 to enable Stage 3)
+
+# ── Numerical knob: Mach target sets dt via ν_lu ─────────────────────────────
+MACH_TARGET = 0.025       # u_lu/cs cap at inlet; throat focusing ~3.6× → throat Mach ≈ 0.09
+
+# Derived lattice values (so changing RESOLUTION_UM keeps Re and Ca correct)
+dx        = RESOLUTION_UM * 1e-6
+nu_lu     = (MACH_TARGET / (3**0.5)) / U_OIL_PHYS * NU_PHYS / dx  # solves for ν_lu given Mach cap on u_oil
+nu_lu     = max(min(nu_lu, 0.5), 0.02)                            # clamp to safe τ range (τ ∈ [0.56, 2.0])
+dt        = nu_lu * dx**2 / NU_PHYS
+u_lu_per_mps = dt / dx
+p_lu_to_pa   = RHO_PHYS * (dx/dt)**2
+sigma_lu_to_Nm = RHO_PHYS * dx**3 / dt**2
+
+W        = 4.0
+SIGMA_EQ    = SIGMA_EQ_PHYS    / sigma_lu_to_Nm
+SIGMA_CLEAN = SIGMA_CLEAN_PHYS / sigma_lu_to_Nm
+TAU_ADS_LU  = 2000.0
+D_GAMMA     = 0.001
+rho0  = 1.0
+nu    = nu_lu
 tau_f = 3.0 * nu + 0.5
-M_ch = 0.05
-drho = 0.001            # base pressure unit (used only for outlet rho)
-F_OUT = -1.0            # outlet rho
+M_ch  = 0.05
 
-# All inlets are velocity BCs. Ratios match experimental µL/min:
-#   oil 300 / aq 40+40+40 → per-inlet velocity oil:water_side = 150:40 = 3.75
-U_TOP_IN_LU         = 0.002     # central water inflow (lu/ts)
-U_WATER_SIDE_IN_LU  = 0.002     # each upper L/R water slot (lu/ts)
-U_OIL_IN_LU         = 0.0075    # each lower L/R oil slot (lu/ts) — 3.75× water side
+U_OIL_IN_LU        = U_OIL_PHYS  * u_lu_per_mps
+U_TOP_IN_LU        = U_TOP_PHYS  * u_lu_per_mps
+U_WATER_SIDE_IN_LU = U_SIDE_PHYS * u_lu_per_mps
+
+drho  = 0.001
+F_OUT = -1.0
 
 
 # ---------------------------------------------------------------------------
