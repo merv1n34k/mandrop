@@ -56,8 +56,9 @@ def run(step, f0, phi0, interior, params,
             n_water = ((phi_c < 0.5).astype(jnp.float64) * interior).sum()
 
             print(f"\n=== Step {step_num} === max|u|={float(max_vel):.2e}  water_px={float(n_water):.0f}  rho=[{float(rho_c.min()):.4f},{float(rho_c.max()):.4f}]")
-            for name, label in [("top", "TOP (water in)"), ("left", "LEFT (oil in)"),
-                                ("right", "RIGHT (oil in)"), ("bot", "BOT (outlet)")]:
+            for name, label in [("top", "TOP    (water in)"), ("ul", "UL slot(water in)"),
+                                ("ur",  "UR slot(water in)"), ("ll", "LL slot(oil in) "),
+                                ("lr",  "LR slot(oil in) "), ("bot","BOT    (outlet) ")]:
                 s = stats[name]
                 print(f"  {label:18s} rho=[{s['rho_min']:.4f},{s['rho_max']:.4f}]  {s['u_label']}=[{s['u_min']:.4e},{s['u_max']:.4e}]  phi=[{s['phi_min']:.3f},{s['phi_max']:.3f}]")
 

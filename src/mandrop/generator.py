@@ -1,4 +1,12 @@
-"""Cross-junction flow-focusing geometry."""
+"""Flow-focusing geometry rasterized from cropped.dxf.
+
+Geometry is stored in physical mm and rasterized at a chosen lattice resolution.
+5 inlets + 1 outlet:
+  top central     (water, y=Ny-1, x in main channel)
+  upper L+R slots (water, x=0 and x=Nx-1, mid y)
+  lower L+R slots (oil,   x=0 and x=Nx-1, lower y)
+  outlet          (y=0, x in main channel)
+"""
 
 import jax.numpy as jnp
 from jax import jit
@@ -9,45 +17,98 @@ from mandrop.engine import (
 )
 
 
+# Physical geometry (mm), measured from cropped.dxf
+# x relative to channel midline; y from outlet bottom
+X_OUTER_L_MM  = -0.1450
+X_CHAN_L_MM   = -0.0625
+X_THROAT_L_MM = -0.0475
+X_THROAT_R_MM =  0.0475
+X_CHAN_R_MM   =  0.0625
+X_OUTER_R_MM  =  0.1600
+
+Y_BOT_MM        = 0.0000
+Y_OUTLET_TOP_MM = 0.3575
+Y_THROAT_BOT_MM = 0.3875
+Y_THROAT_TOP_MM = 0.4500
+Y_LSLOT_BOT_MM  = 0.4825
+Y_LSLOT_TOP_MM  = 0.5600
+Y_USLOT_BOT_MM  = 0.6375
+Y_USLOT_TOP_MM  = 0.7150
+Y_TOP_MM        = 0.8900
+
+
 def setup(
-    Nx=200,
-    Ny=400,
-    w_channel=80,
-    w_side=60,
-    junction_y=None,
+    resolution_um=2.5,
     rho_in_water=1.0005,
     rho_in_oil=1.0005,
     rho_out=0.9995,
 ):
-    """Build wall mask, BC functions, and masks for a cross-junction device.
+    """Build wall mask, BC closures, and masks for the DXF geometry.
 
-    The channel has uniform width (w_channel) from top to bottom.
-    Oil enters from both sides at the junction zone.
-
-    Returns dict with: wall, fluid, interior, opp_jnp,
-                        apply_f_bcs, apply_phi_bcs, boundary_mask,
-                        water_prefill, params
+    Args:
+        resolution_um: physical size of one lattice unit, in µm.
+                       Default 2.5 → 50-node channel, 123×357 domain.
+                       1.0 → 125-node channel, ~308×892 domain (4× finer).
     """
-    if junction_y is None:
-        junction_y = Ny // 2
+    dx_mm = resolution_um / 1000.0
+    nodes_per_mm = 1.0 / dx_mm
 
-    x_L = Nx // 2 - w_channel // 2
-    x_R = Nx // 2 + w_channel // 2
+    def x_node(x_mm):
+        return int(round(x_mm * nodes_per_mm))
 
-    jy_bot = junction_y - w_side // 2
-    jy_top = junction_y + w_side // 2
+    def y_node(y_mm):
+        return int(round(y_mm * nodes_per_mm))
 
-    # --- Wall mask: start solid, carve out ---
+    X_OUTER_L  = x_node(X_OUTER_L_MM)
+    X_CHAN_L   = x_node(X_CHAN_L_MM)
+    X_THROAT_L = x_node(X_THROAT_L_MM)
+    X_THROAT_R = x_node(X_THROAT_R_MM)
+    X_CHAN_R   = x_node(X_CHAN_R_MM)
+    X_OUTER_R  = x_node(X_OUTER_R_MM)
+
+    Y_OUTLET_TOP = y_node(Y_OUTLET_TOP_MM)
+    Y_THROAT_BOT = y_node(Y_THROAT_BOT_MM)
+    Y_THROAT_TOP = y_node(Y_THROAT_TOP_MM)
+    Y_LSLOT_BOT  = y_node(Y_LSLOT_BOT_MM)
+    Y_LSLOT_TOP  = y_node(Y_LSLOT_TOP_MM)
+    Y_USLOT_BOT  = y_node(Y_USLOT_BOT_MM)
+    Y_USLOT_TOP  = y_node(Y_USLOT_TOP_MM)
+    Y_TOP        = y_node(Y_TOP_MM)
+
+    x_off = -X_OUTER_L
+    Nx = X_OUTER_R - X_OUTER_L + 1
+    Ny = Y_TOP + 1
+
+    def gx(xn):
+        return xn + x_off
+
+    gxL  = gx(X_CHAN_L)
+    gxR  = gx(X_CHAN_R)
+    gxTL = gx(X_THROAT_L)
+    gxTR = gx(X_THROAT_R)
+
     wall = jnp.ones((Nx, Ny), dtype=bool)
 
-    # Main channel above junction
-    wall = wall.at[x_L + 1:x_R, jy_top:].set(False)
+    wall = wall.at[gxL+1:gxR, Y_USLOT_TOP:Y_TOP+1].set(False)
+    wall = wall.at[:, Y_USLOT_BOT:Y_USLOT_TOP].set(False)
+    wall = wall.at[gxL+1:gxR, Y_LSLOT_TOP:Y_USLOT_BOT].set(False)
+    wall = wall.at[:, Y_LSLOT_BOT:Y_LSLOT_TOP].set(False)
 
-    # Junction zone: full width open
-    wall = wall.at[:, jy_bot:jy_top].set(False)
+    for yn in range(Y_THROAT_TOP, Y_LSLOT_BOT):
+        frac = (yn - Y_THROAT_TOP) / (Y_LSLOT_BOT - Y_THROAT_TOP)
+        xL_n = int(round(X_THROAT_L + frac * (X_CHAN_L - X_THROAT_L)))
+        xR_n = int(round(X_THROAT_R + frac * (X_CHAN_R - X_THROAT_R)))
+        wall = wall.at[gx(xL_n)+1:gx(xR_n), yn].set(False)
 
-    # Channel below junction (same width as main)
-    wall = wall.at[x_L + 1:x_R, :jy_bot].set(False)
+    wall = wall.at[gxTL+1:gxTR, Y_THROAT_BOT:Y_THROAT_TOP].set(False)
+
+    for yn in range(Y_OUTLET_TOP, Y_THROAT_BOT):
+        frac = (yn - Y_OUTLET_TOP) / (Y_THROAT_BOT - Y_OUTLET_TOP)
+        xL_n = int(round(X_CHAN_L + frac * (X_THROAT_L - X_CHAN_L)))
+        xR_n = int(round(X_CHAN_R + frac * (X_THROAT_R - X_CHAN_R)))
+        wall = wall.at[gx(xL_n)+1:gx(xR_n), yn].set(False)
+
+    wall = wall.at[gxL+1:gxR, 0:Y_OUTLET_TOP].set(False)
 
     fluid = ~wall
     at_edge = (
@@ -61,19 +122,23 @@ def setup(
 
     @jit
     def apply_f_bcs(f):
-        f = zou_he_top(f, x_L + 1, x_R, rho_in_water)
-        f = zou_he_left(f, jy_bot, jy_top, rho_in_oil)
-        f = zou_he_right(f, jy_bot, jy_top, rho_in_oil)
-        f = zou_he_bottom(f, x_L + 1, x_R, rho_out)
+        f = zou_he_top(f, gxL+1, gxR, rho_in_water)
+        f = zou_he_left(f,  Y_USLOT_BOT, Y_USLOT_TOP, rho_in_water)
+        f = zou_he_right(f, Y_USLOT_BOT, Y_USLOT_TOP, rho_in_water)
+        f = zou_he_left(f,  Y_LSLOT_BOT, Y_LSLOT_TOP, rho_in_oil)
+        f = zou_he_right(f, Y_LSLOT_BOT, Y_LSLOT_TOP, rho_in_oil)
+        f = zou_he_bottom(f, gxL+1, gxR, rho_out)
         return f
 
     @jit
     def apply_phi_bcs(phi):
         phi = jnp.where(wall, 1.0, phi)
-        phi = phi.at[x_L + 1:x_R, -1].set(0.0)
-        phi = phi.at[0, jy_bot:jy_top].set(1.0)
-        phi = phi.at[-1, jy_bot:jy_top].set(1.0)
-        phi = phi.at[x_L + 1:x_R, 0].set(phi[x_L + 1:x_R, 1])
+        phi = phi.at[gxL+1:gxR, -1].set(0.0)
+        phi = phi.at[0,  Y_USLOT_BOT:Y_USLOT_TOP].set(0.0)
+        phi = phi.at[-1, Y_USLOT_BOT:Y_USLOT_TOP].set(0.0)
+        phi = phi.at[0,  Y_LSLOT_BOT:Y_LSLOT_TOP].set(1.0)
+        phi = phi.at[-1, Y_LSLOT_BOT:Y_LSLOT_TOP].set(1.0)
+        phi = phi.at[gxL+1:gxR, 0].set(phi[gxL+1:gxR, 1])
         return phi
 
     boundary_mask = (
@@ -83,14 +148,17 @@ def setup(
         (jnp.arange(Ny)[None, :] == Ny - 1)
     )
 
-    # Water prefill: inlet channel above junction only
     water_prefill = jnp.zeros((Nx, Ny), dtype=bool)
-    water_prefill = water_prefill.at[x_L + 1:x_R, jy_top:].set(True)
+    water_prefill = water_prefill.at[gxL+1:gxR, Y_USLOT_TOP:].set(True)
+    water_prefill = water_prefill.at[:, Y_USLOT_BOT:Y_USLOT_TOP].set(True)
+    water_prefill = water_prefill.at[gxL+1:gxR, Y_LSLOT_TOP:Y_USLOT_BOT].set(True)
+    water_prefill = water_prefill & fluid
 
     params = dict(
-        Nx=Nx, Ny=Ny, w_channel=w_channel, w_side=w_side,
-        junction_y=junction_y, x_L=x_L, x_R=x_R,
-        jy_bot=jy_bot, jy_top=jy_top,
+        Nx=Nx, Ny=Ny, resolution_um=resolution_um, dx_mm=dx_mm,
+        gxL=gxL, gxR=gxR, gxTL=gxTL, gxTR=gxTR,
+        Y_USLOT_BOT=Y_USLOT_BOT, Y_USLOT_TOP=Y_USLOT_TOP,
+        Y_LSLOT_BOT=Y_LSLOT_BOT, Y_LSLOT_TOP=Y_LSLOT_TOP,
         rho_in_water=rho_in_water, rho_in_oil=rho_in_oil, rho_out=rho_out,
     )
 
@@ -102,24 +170,24 @@ def setup(
 
 
 def boundary_stats(f, phi, params):
-    """Compute per-boundary diagnostics (rho, u, phi) for the cross-junction."""
+    """Per-port diagnostics: top water, upper L/R water, lower L/R oil, outlet."""
     rho, ux, uy = compute_macros(f)
-    xL, xR = params["x_L"] + 1, params["x_R"]
-    jyb, jyt = params["jy_bot"], params["jy_top"]
-
-    def _slice_stats(arr, label):
-        return float(arr.min()), float(arr.max())
+    xL, xR = params["gxL"]+1, params["gxR"]
+    yub, yut = params["Y_USLOT_BOT"], params["Y_USLOT_TOP"]
+    ylb, ylt = params["Y_LSLOT_BOT"], params["Y_LSLOT_TOP"]
 
     stats = {}
     for name, rho_s, u_s, phi_s, u_label in [
-        ("top",   rho[xL:xR, -1],  uy[xL:xR, -1],  phi[xL:xR, -1],  "uy"),
-        ("left",  rho[0, jyb:jyt],  ux[0, jyb:jyt],  phi[0, jyb:jyt],  "ux"),
-        ("right", rho[-1, jyb:jyt], ux[-1, jyb:jyt], phi[-1, jyb:jyt], "ux"),
-        ("bot",   rho[xL:xR, 0],   uy[xL:xR, 0],   phi[xL:xR, 0],   "uy"),
+        ("top", rho[xL:xR, -1],   uy[xL:xR, -1],   phi[xL:xR, -1],   "uy"),
+        ("ul",  rho[0,  yub:yut], ux[0,  yub:yut], phi[0,  yub:yut], "ux"),
+        ("ur",  rho[-1, yub:yut], ux[-1, yub:yut], phi[-1, yub:yut], "ux"),
+        ("ll",  rho[0,  ylb:ylt], ux[0,  ylb:ylt], phi[0,  ylb:ylt], "ux"),
+        ("lr",  rho[-1, ylb:ylt], ux[-1, ylb:ylt], phi[-1, ylb:ylt], "ux"),
+        ("bot", rho[xL:xR, 0],    uy[xL:xR, 0],    phi[xL:xR, 0],    "uy"),
     ]:
         stats[name] = dict(
             rho_min=float(rho_s.min()), rho_max=float(rho_s.max()),
-            u_min=float(u_s.min()), u_max=float(u_s.max()), u_label=u_label,
+            u_min=float(u_s.min()),     u_max=float(u_s.max()), u_label=u_label,
             phi_min=float(phi_s.min()), phi_max=float(phi_s.max()),
         )
     return rho, ux, uy, stats

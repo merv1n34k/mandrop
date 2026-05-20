@@ -13,7 +13,7 @@ from mandrop.run import run
 # ---------------------------------------------------------------------------
 # Parameters
 # ---------------------------------------------------------------------------
-Nx, Ny = 200, 400
+RESOLUTION_UM = 1.0     # µm per lattice unit (1.0 → 125-node channel, 308×892 domain)
 
 W = 3.0
 sigma = 0.01
@@ -31,12 +31,13 @@ drho = 0.001
 # ---------------------------------------------------------------------------
 def main():
     geo = setup(
-        Nx=Nx, Ny=Ny,
+        resolution_um=RESOLUTION_UM,
         rho_in_water=rho0 + drho / 2.0,
         rho_in_oil=rho0 + drho / 2.0,
         rho_out=rho0 - drho / 2.0,
     )
     p = geo["params"]
+    Nx, Ny = p["Nx"], p["Ny"]
 
     step = make_step(
         geo["wall"], geo["fluid"], geo["interior"], geo["opp_jnp"],
@@ -46,8 +47,9 @@ def main():
 
     print("mandrop — flow-focusing droplet generation")
     print(f"JAX {jax.__version__}, devices: {jax.devices()}")
-    print(f"Domain: {Nx}×{Ny}, channel={p['w_channel']}, side={p['w_side']}")
-    print(f"Junction y={p['junction_y']} [{p['jy_bot']},{p['jy_top']}]")
+    print(f"Resolution: {p['resolution_um']} µm/lu  Domain: {Nx}×{Ny}")
+    print(f"Channel x∈[{p['gxL']},{p['gxR']}]  Throat x∈[{p['gxTL']},{p['gxTR']}]")
+    print(f"Upper slots (water) y∈[{p['Y_USLOT_BOT']},{p['Y_USLOT_TOP']})  Lower slots (oil) y∈[{p['Y_LSLOT_BOT']},{p['Y_LSLOT_TOP']})")
     print(f"Δρ={drho}, tau={tau_f}")
 
     f0, phi0 = init_state(Nx, Ny, rho0, geo["apply_phi_bcs"], geo["water_prefill"])
