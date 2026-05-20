@@ -5,6 +5,7 @@ description = "LBM simulation for water-in-oil droplet generation"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "ezdxf>=1.4.4",
     "jax>=0.10.0",
     "matplotlib>=3.10.9",
 ]
