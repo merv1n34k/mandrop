@@ -19,7 +19,7 @@ N_SEED_DROPLETS   = 3        # seed N water droplets in the outlet at startup
 DROPLET_DIAMETER_MM = 0.120  # 120 µm droplets (≈ channel width)
 
 W = 3.0
-sigma = 0.01
+sigma = 0.05            # raised 5× to bring Ca_lu (~0.33 → ~0.07) into dripping regime
 beta = 3.0 * sigma / W
 kappa = 6.0 * sigma * W
 rho0 = 1.0
