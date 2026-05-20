@@ -26,13 +26,14 @@ rho0 = 1.0
 nu = 1.0 / 6.0
 tau_f = 3.0 * nu + 0.5
 M_ch = 0.01
-drho = 0.001            # base pressure unit (= drho/2 on inlet/outlet side of rho0)
-# Pressure factors derived from real-chip µL/min ratios (300 oil / 40 top / 40 sides):
-#   lower oil slots dominate; water trickles in from top + upper sides
-F_OIL        = 5.0      # each lower slot ≈ 150 µL/min
-F_TOP_WATER  = 1.5      # central inlet      40 µL/min
-F_SIDE_WATER = 0.75     # each upper slot ≈   20 µL/min
-F_OUT        = -1.0     # outlet
+drho = 0.001            # base pressure unit
+F_OIL = 40.0            # rho_in_oil = rho0 + F_OIL*drho/2  (oil must overcome chip back-pressure)
+F_OUT = -1.0            # outlet rho
+
+# Velocity BCs on water inlets (clamps inflow → no backflow)
+# Keep these small so oil can pinch the water column at the throat
+U_TOP_IN_LU         = 0.001     # downward inflow at central water inlet
+U_WATER_SIDE_IN_LU  = 0.002     # inflow at each upper L/R water slot
 
 
 # ---------------------------------------------------------------------------
@@ -44,10 +45,10 @@ def main():
         outlet_extra_mm  =OUTLET_EXTRA_MM,
         n_seed_droplets  =N_SEED_DROPLETS,
         droplet_diameter_mm=DROPLET_DIAMETER_MM,
-        rho_in_top       =rho0 + F_TOP_WATER  * drho / 2.0,
-        rho_in_water_side=rho0 + F_SIDE_WATER * drho / 2.0,
-        rho_in_oil       =rho0 + F_OIL        * drho / 2.0,
-        rho_out          =rho0 + F_OUT        * drho / 2.0,
+        u_top_in_lu       =U_TOP_IN_LU,
+        u_water_side_in_lu=U_WATER_SIDE_IN_LU,
+        rho_in_oil        =rho0 + F_OIL * drho / 2.0,
+        rho_out           =rho0 + F_OUT * drho / 2.0,
     )
     p = geo["params"]
     Nx, Ny = p["Nx"], p["Ny"]

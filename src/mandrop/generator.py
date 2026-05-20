@@ -13,6 +13,7 @@ from jax import jit
 
 from mandrop.engine import (
     opp, zou_he_top, zou_he_bottom, zou_he_left, zou_he_right,
+    zou_he_top_u, zou_he_left_u, zou_he_right_u,
     compute_macros,
 )
 
@@ -42,12 +43,16 @@ def setup(
     outlet_extra_mm=0.0,
     n_seed_droplets=0,
     droplet_diameter_mm=0.075,
-    rho_in_top=1.0005,
-    rho_in_water_side=1.0005,
-    rho_in_oil=1.0005,
+    u_top_in_lu=0.005,
+    u_water_side_in_lu=0.010,
+    rho_in_oil=1.0025,
     rho_out=0.9995,
 ):
     """Build wall mask, BC closures, and masks for the DXF geometry.
+
+    Hybrid BCs (matches a Fluigent pressure + flow-rate controller):
+      - velocity BC on water inlets (top central + upper L/R slots) — no backflow
+      - pressure BC on oil inlets and outlet
 
     Args:
         resolution_um: physical size of one lattice unit, in µm.
@@ -58,10 +63,10 @@ def setup(
         n_seed_droplets: number of water droplets to seed in the outlet channel
                        (evenly spaced along y, centered on the channel midline).
         droplet_diameter_mm: diameter of seed droplets (mm).
-        rho_in_top:        pressure BC at the top central water inlet.
-        rho_in_water_side: pressure BC at the upper L+R water slots.
-        rho_in_oil:        pressure BC at the lower L+R oil slots.
-        rho_out:           pressure BC at the outlet (bottom).
+        u_top_in_lu:        downward inflow speed at top central water inlet (lu/ts).
+        u_water_side_in_lu: inflow speed at upper L+R water slots (lu/ts).
+        rho_in_oil:         pressure BC at the lower L+R oil slots.
+        rho_out:            pressure BC at the outlet (bottom).
     """
     dx_mm = resolution_um / 1000.0
     nodes_per_mm = 1.0 / dx_mm
@@ -135,12 +140,12 @@ def setup(
 
     @jit
     def apply_f_bcs(f):
-        f = zou_he_top(f, gxL+1, gxR, rho_in_top)
-        f = zou_he_left(f,  Y_USLOT_BOT, Y_USLOT_TOP, rho_in_water_side)
-        f = zou_he_right(f, Y_USLOT_BOT, Y_USLOT_TOP, rho_in_water_side)
-        f = zou_he_left(f,  Y_LSLOT_BOT, Y_LSLOT_TOP, rho_in_oil)
-        f = zou_he_right(f, Y_LSLOT_BOT, Y_LSLOT_TOP, rho_in_oil)
-        f = zou_he_bottom(f, gxL+1, gxR, rho_out)
+        f = zou_he_top_u(f,   gxL+1, gxR,                 -u_top_in_lu)
+        f = zou_he_left_u(f,  Y_USLOT_BOT, Y_USLOT_TOP,   +u_water_side_in_lu)
+        f = zou_he_right_u(f, Y_USLOT_BOT, Y_USLOT_TOP,   -u_water_side_in_lu)
+        f = zou_he_left(f,    Y_LSLOT_BOT, Y_LSLOT_TOP,   rho_in_oil)
+        f = zou_he_right(f,   Y_LSLOT_BOT, Y_LSLOT_TOP,   rho_in_oil)
+        f = zou_he_bottom(f,  gxL+1, gxR,                 rho_out)
         return f
 
     @jit
@@ -185,7 +190,7 @@ def setup(
         gxL=gxL, gxR=gxR, gxTL=gxTL, gxTR=gxTR,
         Y_USLOT_BOT=Y_USLOT_BOT, Y_USLOT_TOP=Y_USLOT_TOP,
         Y_LSLOT_BOT=Y_LSLOT_BOT, Y_LSLOT_TOP=Y_LSLOT_TOP,
-        rho_in_top=rho_in_top, rho_in_water_side=rho_in_water_side,
+        u_top_in_lu=u_top_in_lu, u_water_side_in_lu=u_water_side_in_lu,
         rho_in_oil=rho_in_oil, rho_out=rho_out,
     )
 

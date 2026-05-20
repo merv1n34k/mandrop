@@ -129,6 +129,42 @@ def zou_he_right(f, y_start, y_end, rho_target):
     return f
 
 
+def zou_he_top_u(f, x_start, x_end, uy_target):
+    """Velocity BC at y=Ny-1, x in [x_start, x_end). uy<0 = inflow."""
+    uy_t = uy_target
+    f_s = f[x_start:x_end, -1, :]
+    rho_t = (f_s[:, 0] + f_s[:, 1] + f_s[:, 3]
+              + 2.0 * (f_s[:, 2] + f_s[:, 5] + f_s[:, 6])) / (1.0 + uy_t)
+    f = f.at[x_start:x_end, -1, 4].set(f_s[:, 2] - (2.0 / 3.0) * rho_t * uy_t)
+    f = f.at[x_start:x_end, -1, 7].set(f_s[:, 5] + 0.5 * (f_s[:, 1] - f_s[:, 3]) - (1.0 / 6.0) * rho_t * uy_t)
+    f = f.at[x_start:x_end, -1, 8].set(f_s[:, 6] - 0.5 * (f_s[:, 1] - f_s[:, 3]) - (1.0 / 6.0) * rho_t * uy_t)
+    return f
+
+
+def zou_he_left_u(f, y_start, y_end, ux_target):
+    """Velocity BC at x=0, y in [y_start, y_end). ux>0 = inflow."""
+    ux_t = ux_target
+    f_s = f[0, y_start:y_end, :]
+    rho_t = (f_s[:, 0] + f_s[:, 2] + f_s[:, 4]
+              + 2.0 * (f_s[:, 3] + f_s[:, 6] + f_s[:, 7])) / (1.0 - ux_t)
+    f = f.at[0, y_start:y_end, 1].set(f_s[:, 3] + (2.0 / 3.0) * rho_t * ux_t)
+    f = f.at[0, y_start:y_end, 5].set(f_s[:, 7] - 0.5 * (f_s[:, 2] - f_s[:, 4]) + (1.0 / 6.0) * rho_t * ux_t)
+    f = f.at[0, y_start:y_end, 8].set(f_s[:, 6] + 0.5 * (f_s[:, 2] - f_s[:, 4]) + (1.0 / 6.0) * rho_t * ux_t)
+    return f
+
+
+def zou_he_right_u(f, y_start, y_end, ux_target):
+    """Velocity BC at x=Nx-1, y in [y_start, y_end). ux<0 = inflow."""
+    ux_t = ux_target
+    f_s = f[-1, y_start:y_end, :]
+    rho_t = (f_s[:, 0] + f_s[:, 2] + f_s[:, 4]
+              + 2.0 * (f_s[:, 1] + f_s[:, 5] + f_s[:, 8])) / (1.0 + ux_t)
+    f = f.at[-1, y_start:y_end, 3].set(f_s[:, 1] - (2.0 / 3.0) * rho_t * ux_t)
+    f = f.at[-1, y_start:y_end, 6].set(f_s[:, 8] - 0.5 * (f_s[:, 2] - f_s[:, 4]) - (1.0 / 6.0) * rho_t * ux_t)
+    f = f.at[-1, y_start:y_end, 7].set(f_s[:, 5] + 0.5 * (f_s[:, 2] - f_s[:, 4]) - (1.0 / 6.0) * rho_t * ux_t)
+    return f
+
+
 @jit
 def compute_macros(f):
     rho = jnp.sum(f, axis=-1)
