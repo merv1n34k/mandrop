@@ -5,15 +5,16 @@ from jax import jit
 
 from mandrop.engine import (
     opp, zou_he_top, zou_he_bottom, zou_he_left, zou_he_right,
+    compute_macros,
 )
 
 
 def setup(
     Nx=200,
-    Ny=600,
+    Ny=400,
     w_channel=80,
     w_side=60,
-    junction_y=450,
+    junction_y=None,
     rho_in_water=1.0005,
     rho_in_oil=1.0005,
     rho_out=0.9995,
@@ -24,8 +25,12 @@ def setup(
     Oil enters from both sides at the junction zone.
 
     Returns dict with: wall, fluid, interior, opp_jnp,
-                        apply_f_bcs, apply_phi_bcs, boundary_mask, params
+                        apply_f_bcs, apply_phi_bcs, boundary_mask,
+                        water_prefill, params
     """
+    if junction_y is None:
+        junction_y = Ny // 2
+
     x_L = Nx // 2 - w_channel // 2
     x_R = Nx // 2 + w_channel // 2
 
@@ -78,6 +83,10 @@ def setup(
         (jnp.arange(Ny)[None, :] == Ny - 1)
     )
 
+    # Water prefill: inlet channel above junction only
+    water_prefill = jnp.zeros((Nx, Ny), dtype=bool)
+    water_prefill = water_prefill.at[x_L + 1:x_R, jy_top:].set(True)
+
     params = dict(
         Nx=Nx, Ny=Ny, w_channel=w_channel, w_side=w_side,
         junction_y=junction_y, x_L=x_L, x_R=x_R,
@@ -88,5 +97,29 @@ def setup(
     return dict(
         wall=wall, fluid=fluid, interior=interior, opp_jnp=opp_jnp,
         apply_f_bcs=apply_f_bcs, apply_phi_bcs=apply_phi_bcs,
-        boundary_mask=boundary_mask, params=params,
+        boundary_mask=boundary_mask, water_prefill=water_prefill, params=params,
     )
+
+
+def boundary_stats(f, phi, params):
+    """Compute per-boundary diagnostics (rho, u, phi) for the cross-junction."""
+    rho, ux, uy = compute_macros(f)
+    xL, xR = params["x_L"] + 1, params["x_R"]
+    jyb, jyt = params["jy_bot"], params["jy_top"]
+
+    def _slice_stats(arr, label):
+        return float(arr.min()), float(arr.max())
+
+    stats = {}
+    for name, rho_s, u_s, phi_s, u_label in [
+        ("top",   rho[xL:xR, -1],  uy[xL:xR, -1],  phi[xL:xR, -1],  "uy"),
+        ("left",  rho[0, jyb:jyt],  ux[0, jyb:jyt],  phi[0, jyb:jyt],  "ux"),
+        ("right", rho[-1, jyb:jyt], ux[-1, jyb:jyt], phi[-1, jyb:jyt], "ux"),
+        ("bot",   rho[xL:xR, 0],   uy[xL:xR, 0],   phi[xL:xR, 0],   "uy"),
+    ]:
+        stats[name] = dict(
+            rho_min=float(rho_s.min()), rho_max=float(rho_s.max()),
+            u_min=float(u_s.min()), u_max=float(u_s.max()), u_label=u_label,
+            phi_min=float(phi_s.min()), phi_max=float(phi_s.max()),
+        )
+    return rho, ux, uy, stats

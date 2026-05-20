@@ -130,6 +130,23 @@ def zou_he_right(f, y_start, y_end, rho_target):
 
 
 @jit
+def compute_macros(f):
+    rho = jnp.sum(f, axis=-1)
+    ux = jnp.sum(f * ex_jnp, axis=-1) / rho
+    uy = jnp.sum(f * ey_jnp, axis=-1) / rho
+    return rho, ux, uy
+
+
+def init_state(Nx, Ny, rho0, apply_phi_bcs, water_prefill=None):
+    f0 = feq_fn(jnp.ones((Nx, Ny)) * rho0, jnp.zeros((Nx, Ny)), jnp.zeros((Nx, Ny)))
+    phi0 = jnp.ones((Nx, Ny))
+    if water_prefill is not None:
+        phi0 = jnp.where(water_prefill, 0.0, phi0)
+    phi0 = apply_phi_bcs(phi0)
+    return f0, phi0
+
+
+@jit
 def stream(f):
     return jnp.stack(
         [jnp.roll(jnp.roll(f[..., i], ex[i], axis=0), ey[i], axis=1) for i in range(9)],

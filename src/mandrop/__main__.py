@@ -1,20 +1,19 @@
 """LBM flow-focusing simulation for water-in-oil droplet generation."""
 
 import signal
-import time
 
 import jax
 import jax.numpy as jnp
-from jax import lax
 import matplotlib.pyplot as plt
 
-from mandrop.engine import make_step, feq_fn, ex_jnp, ey_jnp
+from mandrop.engine import make_step, compute_macros, init_state
 from mandrop.generator import setup
+from mandrop.run import run
 
 # ---------------------------------------------------------------------------
 # Parameters
 # ---------------------------------------------------------------------------
-Nx, Ny = 200, 600
+Nx, Ny = 200, 400
 
 W = 3.0
 sigma = 0.01
@@ -51,24 +50,8 @@ def main():
     print(f"Junction y={p['junction_y']} [{p['jy_bot']},{p['jy_top']}]")
     print(f"Δρ={drho}, tau={tau_f}")
 
-    # --- Initial condition: all oil ---
-    phi0 = jnp.ones((Nx, Ny))
-    f0 = feq_fn(jnp.ones((Nx, Ny)) * rho0, jnp.zeros((Nx, Ny)), jnp.zeros((Nx, Ny)))
-    phi0_box = geo["apply_phi_bcs"](phi0)
-
-    # JIT warmup
-    print("Compiling (JIT warmup)...", end=" ", flush=True)
-    state = (f0, phi0_box)
-    state = step(state)
-    state[0].block_until_ready()
-    print("done.")
-
-    # Reset
-    state = (f0, phi0_box)
-
-    def scan_body(state, _):
-        return step(state), None
-
+    f0, phi0 = init_state(Nx, Ny, rho0, geo["apply_phi_bcs"], geo["water_prefill"])
+    interior = geo["interior"]
     chunk_size = 200
 
     # Graceful shutdown
@@ -86,7 +69,7 @@ def main():
     for ax in axes:
         ax.set_aspect("equal")
 
-    im0 = axes[0].imshow(phi0_box.T, origin="lower", cmap="RdBu", vmin=0, vmax=1)
+    im0 = axes[0].imshow(phi0.T, origin="lower", cmap="RdBu", vmin=0, vmax=1)
     plt.colorbar(im0, ax=axes[0], shrink=0.5)
     axes[0].set_title("φ (oil=1, water=0)")
 
@@ -112,64 +95,45 @@ def main():
 
     fig.canvas.mpl_connect("key_press_event", on_key)
 
-    interior = geo["interior"]
-    total_steps = 0
-    t_start = time.time()
-    t_chunk = t_start
-
     print(f"\nRunning... Press Escape or Ctrl+C to stop.\n")
     print(f"{'step':>8} | {'MLUPS':>8} | {'max|u|':>10} | {'phi_min':>10} {'phi_max':>10} | {'water_px':>8}")
     print("-" * 75)
 
-    try:
-        while running[0]:
-            state, _ = lax.scan(scan_body, state, None, length=chunk_size)
-            f_c, phi_c = state
-            f_c.block_until_ready()
+    def update_plots(f_c, phi_c, step_num, dt):
+        mlups = Nx * Ny * chunk_size / dt / 1e6
 
-            total_steps += chunk_size
-            t_now = time.time()
-            dt = t_now - t_chunk
-            t_chunk = t_now
-            mlups = Nx * Ny * chunk_size / dt / 1e6
+        rho_c, ux_c, uy_c = compute_macros(f_c)
+        vel_mag = jnp.sqrt(ux_c ** 2 + uy_c ** 2)
+        max_vel = float(vel_mag.max())
+        n_water = float(((phi_c < 0.5).astype(jnp.float64) * interior).sum())
 
-            rho_c = jnp.sum(f_c, axis=-1)
-            ux_c = jnp.sum(f_c * ex_jnp, axis=-1) / rho_c
-            uy_c = jnp.sum(f_c * ey_jnp, axis=-1) / rho_c
-            vel_mag = jnp.sqrt(ux_c ** 2 + uy_c ** 2)
-            max_vel = float(vel_mag.max())
-            n_water = float(((phi_c < 0.5).astype(jnp.float64) * interior).sum())
+        print(f"{step_num:8d} | {mlups:8.2f} | {max_vel:10.2e} | {float(phi_c.min()):10.6f} {float(phi_c.max()):10.6f} | {n_water:8.0f}")
 
-            print(f"{total_steps:8d} | {mlups:8.2f} | {max_vel:10.2e} | {float(phi_c.min()):10.6f} {float(phi_c.max()):10.6f} | {n_water:8.0f}")
+        im0.set_data(phi_c.T)
+        im1.set_data(rho_c.T)
+        im1.set_clim(float(rho_c.min()), float(rho_c.max()))
+        im2.set_data(uy_c.T)
+        vm = max(max_vel, 1e-6)
+        im2.set_clim(-vm, vm)
+        im3.set_data(vel_mag.T)
+        im3.set_clim(0, vm)
+        axes[3].set_title(f"|u| (max={max_vel:.2e})")
 
-            if jnp.isnan(phi_c).any():
-                print("NaN detected, stopping.")
-                break
+        fig.suptitle(f"Step {step_num}  |  {mlups:.1f} MLUPS", fontsize=12)
+        fig.canvas.draw_idle()
+        fig.canvas.flush_events()
 
-            # Update plots
-            im0.set_data(phi_c.T)
-            im1.set_data(rho_c.T)
-            im1.set_clim(float(rho_c.min()), float(rho_c.max()))
-            im2.set_data(uy_c.T)
-            vm = max(max_vel, 1e-6)
-            im2.set_clim(-vm, vm)
-            im3.set_data(vel_mag.T)
-            im3.set_clim(0, vm)
-            axes[3].set_title(f"|u| (max={max_vel:.2e})")
+        if not running[0] or not plt.fignum_exists(fig.number):
+            return False
 
-            fig.suptitle(f"Step {total_steps}  |  {mlups:.1f} MLUPS", fontsize=12)
-            fig.canvas.draw_idle()
-            fig.canvas.flush_events()
+    _, _, total_steps = run(
+        step, f0, phi0, interior, geo["params"],
+        chunk_size=chunk_size, n_chunks=999_999,
+        on_chunk=update_plots, verbose=False,
+    )
 
-            if not plt.fignum_exists(fig.number):
-                break
-
-    except KeyboardInterrupt:
-        pass
-
-    elapsed = time.time() - t_start
-    avg_mlups = Nx * Ny * total_steps / elapsed / 1e6
-    print(f"\nStopped at step {total_steps}. Elapsed: {elapsed:.1f}s, avg {avg_mlups:.1f} MLUPS")
+    elapsed_msg = f"\nStopped at step {total_steps}."
+    print(elapsed_msg)
 
     plt.ioff()
     plt.show()
