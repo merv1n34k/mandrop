@@ -18,21 +18,21 @@ OUTLET_EXTRA_MM   = 0.3575   # extend outlet by this much below the DXF default 
 
 W = 4.0
 SIGMA_EQ    = 0.025     # equilibrium IFT (γ_eq, with full surfactant coverage)
-SIGMA_CLEAN = 0.05      # bare interface IFT (γ_clean); physical ratio ~10× capped to 2× σ_eq (ceiling for stability)
+SIGMA_CLEAN = 0.025     # DIAGNOSTIC: disable Stage 3 effect (σ_clean == σ_eq → constant σ)
 TAU_ADS_LU  = 2000.0    # adsorption timescale (lattice steps); tune empirically
 D_GAMMA     = 0.001     # small bulk diffusion for Gamma stability
 rho0 = 1.0
 nu = 1.0 / 6.0
 tau_f = 3.0 * nu + 0.5
 M_ch = 0.05
-drho = 0.001            # base pressure unit
-F_OIL = 40.0            # rho_in_oil = rho0 + F_OIL*drho/2  (oil must overcome chip back-pressure)
+drho = 0.001            # base pressure unit (used only for outlet rho)
 F_OUT = -1.0            # outlet rho
 
-# Velocity BCs on water inlets (clamps inflow → no backflow)
-# Keep these small so oil can pinch the water column at the throat
-U_TOP_IN_LU         = 0.001     # downward inflow at central water inlet
-U_WATER_SIDE_IN_LU  = 0.002     # inflow at each upper L/R water slot
+# All inlets are velocity BCs. Ratios match experimental µL/min:
+#   oil 300 / aq 40+40+40 → per-inlet velocity oil:water_side = 150:40 = 3.75
+U_TOP_IN_LU         = 0.002     # central water inflow (lu/ts)
+U_WATER_SIDE_IN_LU  = 0.002     # each upper L/R water slot (lu/ts)
+U_OIL_IN_LU         = 0.0075    # each lower L/R oil slot (lu/ts) — 3.75× water side
 
 
 # ---------------------------------------------------------------------------
@@ -44,7 +44,7 @@ def main():
         outlet_extra_mm  =OUTLET_EXTRA_MM,
         u_top_in_lu       =U_TOP_IN_LU,
         u_water_side_in_lu=U_WATER_SIDE_IN_LU,
-        rho_in_oil        =rho0 + F_OIL * drho / 2.0,
+        u_oil_in_lu       =U_OIL_IN_LU,
         rho_out           =rho0 + F_OUT * drho / 2.0,
     )
     p = geo["params"]

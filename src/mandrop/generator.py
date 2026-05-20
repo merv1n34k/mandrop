@@ -43,14 +43,13 @@ def setup(
     outlet_extra_mm=0.0,
     u_top_in_lu=0.005,
     u_water_side_in_lu=0.010,
-    rho_in_oil=1.0025,
+    u_oil_in_lu=0.0375,
     rho_out=0.9995,
 ):
     """Build wall mask, BC closures, and masks for the DXF geometry.
 
-    Hybrid BCs (matches a Fluigent pressure + flow-rate controller):
-      - velocity BC on water inlets (top central + upper L/R slots) — no backflow
-      - pressure BC on oil inlets and outlet
+    BCs: velocity on all 5 inlets, pressure on outlet. Velocity BCs let us
+    prescribe the experimental flow-rate ratios directly.
 
     Args:
         resolution_um: physical size of one lattice unit, in µm.
@@ -58,9 +57,9 @@ def setup(
                        1.0 → 125-node channel, ~308×892 domain (4× finer).
         outlet_extra_mm: extra outlet channel length below the throat (mm).
                        0.0 keeps DXF default (0.3575 mm). 0.3575 doubles it.
-        u_top_in_lu:        downward inflow speed at top central water inlet (lu/ts).
-        u_water_side_in_lu: inflow speed at upper L+R water slots (lu/ts).
-        rho_in_oil:         pressure BC at the lower L+R oil slots.
+        u_top_in_lu:        downward inflow at top central water inlet (lu/ts).
+        u_water_side_in_lu: inflow at upper L+R water slots (lu/ts, each side).
+        u_oil_in_lu:        inflow at lower L+R oil slots (lu/ts, each side).
         rho_out:            pressure BC at the outlet (bottom).
     """
     dx_mm = resolution_um / 1000.0
@@ -138,8 +137,8 @@ def setup(
         f = zou_he_top_u(f,   gxL+1, gxR,                 -u_top_in_lu)
         f = zou_he_left_u(f,  Y_USLOT_BOT, Y_USLOT_TOP,   +u_water_side_in_lu)
         f = zou_he_right_u(f, Y_USLOT_BOT, Y_USLOT_TOP,   -u_water_side_in_lu)
-        f = zou_he_left(f,    Y_LSLOT_BOT, Y_LSLOT_TOP,   rho_in_oil)
-        f = zou_he_right(f,   Y_LSLOT_BOT, Y_LSLOT_TOP,   rho_in_oil)
+        f = zou_he_left_u(f,  Y_LSLOT_BOT, Y_LSLOT_TOP,   +u_oil_in_lu)
+        f = zou_he_right_u(f, Y_LSLOT_BOT, Y_LSLOT_TOP,   -u_oil_in_lu)
         f = zou_he_bottom(f,  gxL+1, gxR,                 rho_out)
         return f
 
@@ -187,7 +186,7 @@ def setup(
         Y_USLOT_BOT=Y_USLOT_BOT, Y_USLOT_TOP=Y_USLOT_TOP,
         Y_LSLOT_BOT=Y_LSLOT_BOT, Y_LSLOT_TOP=Y_LSLOT_TOP,
         u_top_in_lu=u_top_in_lu, u_water_side_in_lu=u_water_side_in_lu,
-        rho_in_oil=rho_in_oil, rho_out=rho_out,
+        u_oil_in_lu=u_oil_in_lu, rho_out=rho_out,
     )
 
     return dict(
