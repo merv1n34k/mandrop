@@ -41,8 +41,6 @@ Y_TOP_MM        = 0.8900
 def setup(
     resolution_um=2.5,
     outlet_extra_mm=0.0,
-    n_seed_droplets=0,
-    droplet_diameter_mm=0.075,
     u_top_in_lu=0.005,
     u_water_side_in_lu=0.010,
     rho_in_oil=1.0025,
@@ -60,9 +58,6 @@ def setup(
                        1.0 → 125-node channel, ~308×892 domain (4× finer).
         outlet_extra_mm: extra outlet channel length below the throat (mm).
                        0.0 keeps DXF default (0.3575 mm). 0.3575 doubles it.
-        n_seed_droplets: number of water droplets to seed in the outlet channel
-                       (evenly spaced along y, centered on the channel midline).
-        droplet_diameter_mm: diameter of seed droplets (mm).
         u_top_in_lu:        downward inflow speed at top central water inlet (lu/ts).
         u_water_side_in_lu: inflow speed at upper L+R water slots (lu/ts).
         rho_in_oil:         pressure BC at the lower L+R oil slots.
@@ -170,19 +165,6 @@ def setup(
     water_prefill = water_prefill.at[gxL+1:gxR, Y_USLOT_TOP:].set(True)
     water_prefill = water_prefill.at[:, Y_USLOT_BOT:Y_USLOT_TOP].set(True)
     water_prefill = water_prefill.at[gxL+1:gxR, Y_LSLOT_TOP:Y_USLOT_BOT].set(True)
-
-    if n_seed_droplets > 0:
-        r_lu = max(1, int(round(0.5 * droplet_diameter_mm * nodes_per_mm)))
-        spacing = int(round(2.5 * r_lu))   # center-to-center = 2.5 × radius
-        cx = x_off
-        y0 = Y_OUTLET_TOP // 2 - (n_seed_droplets - 1) * spacing // 2
-        xx = jnp.arange(Nx)[:, None]
-        yy = jnp.arange(Ny)[None, :]
-        for i in range(n_seed_droplets):
-            cy = y0 + i * spacing
-            disk = (xx - cx) ** 2 + (yy - cy) ** 2 <= r_lu ** 2
-            water_prefill = water_prefill | disk
-
     water_prefill = water_prefill & fluid
 
     params = dict(
