@@ -16,14 +16,15 @@ from mandrop.run import run
 RESOLUTION_UM     = 1.0      # µm per lattice unit
 OUTLET_EXTRA_MM   = 0.3575   # extend outlet by this much below the DXF default (= 2× original)
 
-W = 3.0
-sigma = 0.025           # 2.5× over original; 0.05 caused NaN at 1µm/lu (κ=0.9 too stiff)
-beta = 3.0 * sigma / W
-kappa = 6.0 * sigma * W
+W = 4.0
+SIGMA_EQ    = 0.025     # equilibrium IFT (γ_eq, with full surfactant coverage)
+SIGMA_CLEAN = 0.05      # bare interface IFT (γ_clean); physical ratio ~10× capped to 2× σ_eq (ceiling for stability)
+TAU_ADS_LU  = 2000.0    # adsorption timescale (lattice steps); tune empirically
+D_GAMMA     = 0.001     # small bulk diffusion for Gamma stability
 rho0 = 1.0
 nu = 1.0 / 6.0
 tau_f = 3.0 * nu + 0.5
-M_ch = 0.01
+M_ch = 0.05
 drho = 0.001            # base pressure unit
 F_OIL = 40.0            # rho_in_oil = rho0 + F_OIL*drho/2  (oil must overcome chip back-pressure)
 F_OUT = -1.0            # outlet rho
@@ -51,8 +52,8 @@ def main():
 
     step = make_step(
         geo["wall"], geo["fluid"], geo["interior"], geo["opp_jnp"],
-        tau_f, beta, kappa, M_ch,
-        geo["apply_f_bcs"], geo["apply_phi_bcs"], geo["boundary_mask"],
+        tau_f, SIGMA_CLEAN, SIGMA_EQ, W, TAU_ADS_LU, D_GAMMA, M_ch,
+        geo["apply_f_bcs"], geo["apply_phi_bcs"], geo["apply_gamma_bcs"], geo["boundary_mask"],
     )
 
     print("mandrop — flow-focusing droplet generation")
@@ -60,9 +61,12 @@ def main():
     print(f"Resolution: {p['resolution_um']} µm/lu  Domain: {Nx}×{Ny}")
     print(f"Channel x∈[{p['gxL']},{p['gxR']}]  Throat x∈[{p['gxTL']},{p['gxTR']}]")
     print(f"Upper slots (water) y∈[{p['Y_USLOT_BOT']},{p['Y_USLOT_TOP']})  Lower slots (oil) y∈[{p['Y_LSLOT_BOT']},{p['Y_LSLOT_TOP']})")
-    print(f"Δρ={drho}, tau={tau_f}")
+    print(f"σ_clean={SIGMA_CLEAN}  σ_eq={SIGMA_EQ}  τ_ads={TAU_ADS_LU}  Δρ={drho}, tau={tau_f}")
 
-    f0, phi0 = init_state(Nx, Ny, rho0, geo["apply_phi_bcs"], geo["water_prefill"])
+    f0, phi0, Gamma0 = init_state(
+        Nx, Ny, rho0, geo["apply_phi_bcs"], geo["apply_gamma_bcs"],
+        SIGMA_EQ, W, M_ch, geo["water_prefill"],
+    )
     interior = geo["interior"]
     chunk_size = 200
 
@@ -77,7 +81,7 @@ def main():
 
     # Matplotlib interactive setup
     plt.ion()
-    fig, axes = plt.subplots(1, 4, figsize=(16, 12))
+    fig, axes = plt.subplots(1, 5, figsize=(20, 12))
     for ax in axes:
         ax.set_aspect("equal")
 
@@ -97,6 +101,10 @@ def main():
     plt.colorbar(im3, ax=axes[3], shrink=0.5)
     axes[3].set_title("|u|")
 
+    im4 = axes[4].imshow(Gamma0.T, origin="lower", cmap="magma", vmin=0, vmax=1)
+    plt.colorbar(im4, ax=axes[4], shrink=0.5)
+    axes[4].set_title("Γ (surfactant coverage)")
+
     fig.tight_layout()
     fig.canvas.draw()
     fig.canvas.flush_events()
@@ -108,18 +116,20 @@ def main():
     fig.canvas.mpl_connect("key_press_event", on_key)
 
     print(f"\nRunning... Press Escape or Ctrl+C to stop.\n")
-    print(f"{'step':>8} | {'MLUPS':>8} | {'max|u|':>10} | {'phi_min':>10} {'phi_max':>10} | {'water_px':>8}")
-    print("-" * 75)
+    print(f"{'step':>8} | {'MLUPS':>8} | {'max|u|':>10} | {'phi_min':>10} {'phi_max':>10} | {'water_px':>8} | Γ_iface")
+    print("-" * 90)
 
-    def update_plots(f_c, phi_c, step_num, dt):
+    def update_plots(f_c, phi_c, Gamma_c, step_num, dt):
         mlups = Nx * Ny * chunk_size / dt / 1e6
 
         rho_c, ux_c, uy_c = compute_macros(f_c)
         vel_mag = jnp.sqrt(ux_c ** 2 + uy_c ** 2)
         max_vel = float(vel_mag.max())
         n_water = float(((phi_c < 0.5).astype(jnp.float64) * interior).sum())
+        gamma_mean_iface = float(jnp.where((phi_c > 0.05) & (phi_c < 0.95), Gamma_c, 0.0).sum() /
+                                  jnp.maximum(((phi_c > 0.05) & (phi_c < 0.95)).sum(), 1))
 
-        print(f"{step_num:8d} | {mlups:8.2f} | {max_vel:10.2e} | {float(phi_c.min()):10.6f} {float(phi_c.max()):10.6f} | {n_water:8.0f}")
+        print(f"{step_num:8d} | {mlups:8.2f} | {max_vel:10.2e} | {float(phi_c.min()):10.6f} {float(phi_c.max()):10.6f} | {n_water:8.0f} | Γ_iface={gamma_mean_iface:.3f}")
 
         im0.set_data(phi_c.T)
         im1.set_data(rho_c.T)
@@ -130,6 +140,8 @@ def main():
         im3.set_data(vel_mag.T)
         im3.set_clim(0, vm)
         axes[3].set_title(f"|u| (max={max_vel:.2e})")
+        im4.set_data(Gamma_c.T)
+        axes[4].set_title(f"Γ (⟨Γ⟩_iface={gamma_mean_iface:.2f})")
 
         fig.suptitle(f"Step {step_num}  |  {mlups:.1f} MLUPS", fontsize=12)
         fig.canvas.draw_idle()
@@ -138,8 +150,8 @@ def main():
         if not running[0] or not plt.fignum_exists(fig.number):
             return False
 
-    _, _, total_steps = run(
-        step, f0, phi0, interior, geo["params"],
+    _, _, _, total_steps = run(
+        step, f0, phi0, Gamma0, interior, geo["params"],
         chunk_size=chunk_size, n_chunks=999_999,
         on_chunk=update_plots, verbose=False,
     )
