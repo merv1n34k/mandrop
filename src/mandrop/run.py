@@ -46,8 +46,7 @@ def run(step, f0, phi0, interior, params,
         t_chunk = t_now
 
         if jnp.isnan(phi_c).any() or jnp.isnan(f_c).any():
-            if verbose:
-                print("  *** NaN detected! ***")
+            print(f"  *** NaN detected at step {step_num} ***")
             break
 
         if verbose:
