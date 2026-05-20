@@ -26,8 +26,13 @@ rho0 = 1.0
 nu = 1.0 / 6.0
 tau_f = 3.0 * nu + 0.5
 M_ch = 0.01
-drho = 0.001            # base oil inlet excess pressure (relative to outlet)
-WATER_FACTOR = 3.0      # water inlet excess pressure = WATER_FACTOR × oil excess
+drho = 0.001            # base pressure unit (= drho/2 on inlet/outlet side of rho0)
+# Pressure factors derived from real-chip µL/min ratios (300 oil / 40 top / 40 sides):
+#   lower oil slots dominate; water trickles in from top + upper sides
+F_OIL        = 5.0      # each lower slot ≈ 150 µL/min
+F_TOP_WATER  = 1.5      # central inlet      40 µL/min
+F_SIDE_WATER = 0.75     # each upper slot ≈   20 µL/min
+F_OUT        = -1.0     # outlet
 
 
 # ---------------------------------------------------------------------------
@@ -39,9 +44,10 @@ def main():
         outlet_extra_mm  =OUTLET_EXTRA_MM,
         n_seed_droplets  =N_SEED_DROPLETS,
         droplet_diameter_mm=DROPLET_DIAMETER_MM,
-        rho_in_water=rho0 + WATER_FACTOR * drho / 2.0,
-        rho_in_oil  =rho0 + drho / 2.0,
-        rho_out     =rho0 - drho / 2.0,
+        rho_in_top       =rho0 + F_TOP_WATER  * drho / 2.0,
+        rho_in_water_side=rho0 + F_SIDE_WATER * drho / 2.0,
+        rho_in_oil       =rho0 + F_OIL        * drho / 2.0,
+        rho_out          =rho0 + F_OUT        * drho / 2.0,
     )
     p = geo["params"]
     Nx, Ny = p["Nx"], p["Ny"]
