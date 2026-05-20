@@ -123,9 +123,9 @@ def zou_he_right(f, y_start, y_end, rho_target):
     f_s = f[-1, y_start:y_end, :]
     ux_t = -1.0 + (f_s[:, 0] + f_s[:, 2] + f_s[:, 4]
                     + 2.0 * (f_s[:, 1] + f_s[:, 5] + f_s[:, 8])) / rho_t
-    f = f.at[-1, y_start:y_end, 3].set(f_s[:, 1] + (2.0 / 3.0) * rho_t * ux_t)
-    f = f.at[-1, y_start:y_end, 6].set(f_s[:, 5] - 0.5 * (f_s[:, 2] - f_s[:, 4]) - (1.0 / 6.0) * rho_t * ux_t)  # note: ux_t is negative
-    f = f.at[-1, y_start:y_end, 7].set(f_s[:, 8] + 0.5 * (f_s[:, 2] - f_s[:, 4]) - (1.0 / 6.0) * rho_t * ux_t)
+    f = f.at[-1, y_start:y_end, 3].set(f_s[:, 1] - (2.0 / 3.0) * rho_t * ux_t)
+    f = f.at[-1, y_start:y_end, 6].set(f_s[:, 8] - 0.5 * (f_s[:, 2] - f_s[:, 4]) - (1.0 / 6.0) * rho_t * ux_t)
+    f = f.at[-1, y_start:y_end, 7].set(f_s[:, 5] + 0.5 * (f_s[:, 2] - f_s[:, 4]) - (1.0 / 6.0) * rho_t * ux_t)
     return f
 
 

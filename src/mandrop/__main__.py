@@ -1,7 +1,6 @@
-"""LBM simulation for water-in-oil droplet generation with real-time visualization."""
+"""LBM flow-focusing simulation for water-in-oil droplet generation."""
 
 import signal
-import sys
 import time
 
 import jax
@@ -9,17 +8,14 @@ import jax.numpy as jnp
 from jax import lax
 import matplotlib.pyplot as plt
 
-from mandrop.engine import (
-    make_step, feq_fn, ex_jnp, ey_jnp, opp,
-    zou_he_top, zou_he_bottom,
-)
-from jax import jit
+from mandrop.engine import make_step, feq_fn, ex_jnp, ey_jnp
+from mandrop.generator import setup
 
 # ---------------------------------------------------------------------------
 # Parameters
 # ---------------------------------------------------------------------------
 Nx, Ny = 200, 600
-R = 50.0
+
 W = 3.0
 sigma = 0.01
 beta = 3.0 * sigma / W
@@ -29,73 +25,36 @@ nu = 1.0 / 6.0
 tau_f = 3.0 * nu + 0.5
 M_ch = 0.01
 drho = 0.001
-rho_in = rho0 + drho / 2.0
-rho_out = rho0 - drho / 2.0
-droplet_centers = [150.0, 300.0, 450.0]
 
 
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 def main():
-    # Phi initialization: 3 droplets
-    x = jnp.arange(Nx, dtype=jnp.float64)
-    y = jnp.arange(Ny, dtype=jnp.float64)
-    X, Y = jnp.meshgrid(x, y, indexing="ij")
-    xc = Nx / 2.0
-
-    phi0 = jnp.ones((Nx, Ny))
-    for yc_d in droplet_centers:
-        r = jnp.sqrt((X - xc) ** 2 + (Y - yc_d) ** 2)
-        phi0 = jnp.minimum(phi0, 0.5 * (1.0 + jnp.tanh((r - R) / (2.0 * W))))
-
-    # Walls and boundary conditions
-    wall = jnp.zeros((Nx, Ny), dtype=bool)
-    wall = wall.at[0, :].set(True)
-    wall = wall.at[-1, :].set(True)
-
-    fluid = ~wall
-    interior = fluid & (jnp.arange(Ny)[None, :] > 0) & (jnp.arange(Ny)[None, :] < Ny - 1)
-    opp_jnp = jnp.array(opp)
-
-    inlet_width = int(0.4 * Nx)
-    inlet_x0 = Nx // 2 - inlet_width // 2
-    inlet_x1 = Nx // 2 + inlet_width // 2
-    inlet_water = jnp.zeros(Nx, dtype=bool).at[inlet_x0:inlet_x1].set(True)
-    phi_inlet = jnp.where(inlet_water, 0.0, 1.0)
-
-    @jit
-    def apply_f_bcs(f):
-        f = zou_he_top(f, 1, Nx - 1, rho_in)
-        f = zou_he_bottom(f, 1, Nx - 1, rho_out)
-        return f
-
-    @jit
-    def apply_phi_bcs(phi):
-        phi = jnp.where(wall, 1.0, phi)
-        phi = phi.at[:, -1].set(phi_inlet)
-        phi = phi.at[:, 0].set(phi[:, 1])
-        return phi
-
-    boundary_mask = (jnp.arange(Ny)[None, :] == 0) | (jnp.arange(Ny)[None, :] == Ny - 1)
+    geo = setup(
+        Nx=Nx, Ny=Ny,
+        rho_in_water=rho0 + drho / 2.0,
+        rho_in_oil=rho0 + drho / 2.0,
+        rho_out=rho0 - drho / 2.0,
+    )
+    p = geo["params"]
 
     step = make_step(
-        wall, fluid, interior, opp_jnp,
+        geo["wall"], geo["fluid"], geo["interior"], geo["opp_jnp"],
         tau_f, beta, kappa, M_ch,
-        apply_f_bcs, apply_phi_bcs, boundary_mask,
+        geo["apply_f_bcs"], geo["apply_phi_bcs"], geo["boundary_mask"],
     )
 
-    print(f"mandrop — LBM droplet simulation")
+    print("mandrop — flow-focusing droplet generation")
     print(f"JAX {jax.__version__}, devices: {jax.devices()}")
-    print(f"Domain: {Nx}×{Ny}, 3 droplets R={R:.0f}, inlet: center 40% water")
+    print(f"Domain: {Nx}×{Ny}, channel={p['w_channel']}, side={p['w_side']}")
+    print(f"Junction y={p['junction_y']} [{p['jy_bot']},{p['jy_top']}]")
     print(f"Δρ={drho}, tau={tau_f}")
 
-    # Init
-    rho_init = jnp.ones((Nx, Ny)) * rho0
-    ux0 = jnp.zeros((Nx, Ny))
-    uy0 = jnp.zeros((Nx, Ny))
-    f0 = feq_fn(rho_init, ux0, uy0)
-    phi0_box = apply_phi_bcs(phi0)
+    # --- Initial condition: all oil ---
+    phi0 = jnp.ones((Nx, Ny))
+    f0 = feq_fn(jnp.ones((Nx, Ny)) * rho0, jnp.zeros((Nx, Ny)), jnp.zeros((Nx, Ny)))
+    phi0_box = geo["apply_phi_bcs"](phi0)
 
     # JIT warmup
     print("Compiling (JIT warmup)...", end=" ", flush=True)
@@ -107,7 +66,6 @@ def main():
     # Reset
     state = (f0, phi0_box)
 
-    # Scan body for chunked stepping
     def scan_body(state, _):
         return step(state), None
 
@@ -129,19 +87,19 @@ def main():
         ax.set_aspect("equal")
 
     im0 = axes[0].imshow(phi0_box.T, origin="lower", cmap="RdBu", vmin=0, vmax=1)
-    cb0 = plt.colorbar(im0, ax=axes[0], shrink=0.5)
-    axes[0].set_title("φ (oil=1, droplet=0)")
+    plt.colorbar(im0, ax=axes[0], shrink=0.5)
+    axes[0].set_title("φ (oil=1, water=0)")
 
     im1 = axes[1].imshow(jnp.ones((Nx, Ny)).T, origin="lower", cmap="viridis")
-    cb1 = plt.colorbar(im1, ax=axes[1], shrink=0.5)
+    plt.colorbar(im1, ax=axes[1], shrink=0.5)
     axes[1].set_title("ρ (pressure)")
 
     im2 = axes[2].imshow(jnp.zeros((Nx, Ny)).T, origin="lower", cmap="coolwarm", vmin=-0.01, vmax=0.01)
-    cb2 = plt.colorbar(im2, ax=axes[2], shrink=0.5)
+    plt.colorbar(im2, ax=axes[2], shrink=0.5)
     axes[2].set_title("u_y (flow direction)")
 
     im3 = axes[3].imshow(jnp.zeros((Nx, Ny)).T, origin="lower", cmap="hot", vmin=0, vmax=0.01)
-    cb3 = plt.colorbar(im3, ax=axes[3], shrink=0.5)
+    plt.colorbar(im3, ax=axes[3], shrink=0.5)
     axes[3].set_title("|u|")
 
     fig.tight_layout()
@@ -154,12 +112,13 @@ def main():
 
     fig.canvas.mpl_connect("key_press_event", on_key)
 
+    interior = geo["interior"]
     total_steps = 0
     t_start = time.time()
     t_chunk = t_start
 
     print(f"\nRunning... Press Escape or Ctrl+C to stop.\n")
-    print(f"{'step':>8} | {'MLUPS':>8} | {'max|u|':>10} | {'phi_min':>10} {'phi_max':>10} | {'droplets':>8}")
+    print(f"{'step':>8} | {'MLUPS':>8} | {'max|u|':>10} | {'phi_min':>10} {'phi_max':>10} | {'water_px':>8}")
     print("-" * 75)
 
     try:
@@ -179,9 +138,9 @@ def main():
             uy_c = jnp.sum(f_c * ey_jnp, axis=-1) / rho_c
             vel_mag = jnp.sqrt(ux_c ** 2 + uy_c ** 2)
             max_vel = float(vel_mag.max())
-            n_drop = float(((phi_c < 0.5).astype(jnp.float64) * interior).sum())
+            n_water = float(((phi_c < 0.5).astype(jnp.float64) * interior).sum())
 
-            print(f"{total_steps:8d} | {mlups:8.2f} | {max_vel:10.2e} | {float(phi_c.min()):10.6f} {float(phi_c.max()):10.6f} | {n_drop:8.0f}")
+            print(f"{total_steps:8d} | {mlups:8.2f} | {max_vel:10.2e} | {float(phi_c.min()):10.6f} {float(phi_c.max()):10.6f} | {n_water:8.0f}")
 
             if jnp.isnan(phi_c).any():
                 print("NaN detected, stopping.")
