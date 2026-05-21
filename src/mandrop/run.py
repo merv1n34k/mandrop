@@ -13,29 +13,37 @@ def run(step, f0, phi0, Gamma0, interior, params,
         chunk_size=500, n_chunks=60, on_chunk=None, verbose=True):
     """Run simulation in chunks with JIT warmup and diagnostics.
 
-    on_chunk(f, phi, Gamma, step_num, dt) is called after each chunk.
-    Return False from on_chunk to stop early.
+    Tracks φ at the (probe_x, probe_y) location from `params` every step,
+    so droplet-generation frequency can be measured downstream of the throat.
+
+    on_chunk(f, phi, Gamma, probe_history, step_num, dt) is called after each
+    chunk. Return False from on_chunk to stop early.
 
     Returns (f_final, phi_final, Gamma_final, total_steps).
     """
+    probe_x = params["probe_x"]
+    probe_y = params["probe_y"]
+
+    def scan_body(state, _):
+        new_state = step(state)
+        _, phi_new, _ = new_state
+        return new_state, phi_new[probe_x, probe_y]
+
     # JIT warmup
     state = (f0, phi0, Gamma0)
-    state = step(state)
+    state, _ = lax.scan(scan_body, state, None, length=1)
     state[0].block_until_ready()
     if verbose:
         print("JIT compiled.")
 
     state = (f0, phi0, Gamma0)
 
-    def scan_body(state, _):
-        return step(state), None
-
     t0 = time.time()
     t_chunk = t0
     chunk = 0
 
     while chunk < n_chunks:
-        state, _ = lax.scan(scan_body, state, None, length=chunk_size)
+        state, probe_history = lax.scan(scan_body, state, None, length=chunk_size)
         f_c, phi_c, Gamma_c = state
         f_c.block_until_ready()
 
@@ -62,7 +70,7 @@ def run(step, f0, phi0, Gamma0, interior, params,
                 print(f"  {label:18s} rho=[{s['rho_min']:.4f},{s['rho_max']:.4f}]  {s['u_label']}=[{s['u_min']:.4e},{s['u_max']:.4e}]  phi=[{s['phi_min']:.3f},{s['phi_max']:.3f}]")
 
         if on_chunk is not None:
-            if on_chunk(f_c, phi_c, Gamma_c, step_num, dt) is False:
+            if on_chunk(f_c, phi_c, Gamma_c, probe_history, step_num, dt) is False:
                 break
 
     total_steps = chunk * chunk_size

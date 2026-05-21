@@ -8,6 +8,8 @@ Geometry is stored in physical mm and rasterized at a chosen lattice resolution.
   outlet          (y=0, x in main channel)
 """
 
+import numpy as np
+from scipy import ndimage
 import jax.numpy as jnp
 from jax import jit
 
@@ -180,13 +182,20 @@ def setup(
     water_prefill = water_prefill.at[gxL+1:gxR, Y_LSLOT_TOP:Y_USLOT_BOT].set(True)
     water_prefill = water_prefill & fluid
 
+    # Probe point for pulse-counter frequency measurement: middle of outlet
+    # channel, 5 lu below the taper transition.
+    probe_x = (gxL + gxR) // 2
+    probe_y = max(Y_OUTLET_TOP - 5, 1)
+
     params = dict(
         Nx=Nx, Ny=Ny, resolution_um=resolution_um, dx_mm=dx_mm,
         gxL=gxL, gxR=gxR, gxTL=gxTL, gxTR=gxTR,
+        Y_OUTLET_TOP=Y_OUTLET_TOP, Y_THROAT_BOT=Y_THROAT_BOT, Y_THROAT_TOP=Y_THROAT_TOP,
         Y_USLOT_BOT=Y_USLOT_BOT, Y_USLOT_TOP=Y_USLOT_TOP,
         Y_LSLOT_BOT=Y_LSLOT_BOT, Y_LSLOT_TOP=Y_LSLOT_TOP,
         u_top_in_lu=u_top_in_lu, u_water_side_in_lu=u_water_side_in_lu,
         u_oil_in_lu=u_oil_in_lu, rho_out=rho_out,
+        probe_x=probe_x, probe_y=probe_y,
     )
 
     return dict(
