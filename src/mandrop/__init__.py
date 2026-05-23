@@ -48,18 +48,16 @@ def build(params=None):
 
     step = make_step(
         geo["wall"], geo["fluid"], geo["interior"], geo["opp_jnp"],
-        lat.tau_c, lat.tau_d, lat.sigma_clean, lat.sigma_eq, lat.W,
-        lat.tau_ads_lu, lat.D_gamma, lat.M_ch,
-        geo["apply_f_bcs"], geo["apply_phi_bcs"], geo["apply_gamma_bcs"], geo["boundary_mask"],
+        lat.tau_c, lat.tau_d, lat.sigma, lat.W, lat.M_ch,
+        geo["apply_f_bcs"], geo["apply_phi_bcs"], geo["boundary_mask"],
     )
 
     Nx, Ny = geo["params"]["Nx"], geo["params"]["Ny"]
-    f0, phi0, Gamma0 = init_state(
-        Nx, Ny, lat.rho0,
-        geo["apply_phi_bcs"], geo["apply_gamma_bcs"],
-        lat.sigma_eq, lat.W, lat.M_ch, geo["water_prefill"],
+    f0, phi0 = init_state(
+        Nx, Ny, lat.rho0, geo["apply_phi_bcs"],
+        lat.sigma, lat.W, lat.M_ch, geo["water_prefill"],
     )
-    return geo, step, (f0, phi0, Gamma0), lat
+    return geo, step, (f0, phi0), lat
 
 
 __all__ = [

@@ -69,14 +69,13 @@ def droplet_stats(phi, geo_params, probe_history=None, dt_phys=None):
     )
 
 
-def plot_fields(f, phi, Gamma=None, interior=None, title=None):
-    """4- or 5-panel summary plot: φ, ρ, u_y, |u|, optional Γ."""
+def plot_fields(f, phi, interior=None, title=None):
+    """4-panel summary plot: φ, ρ, u_y, |u|."""
     rho, ux, uy = compute_macros(f)
     vel_mag = jnp.sqrt(ux ** 2 + uy ** 2)
     vm = max(float(vel_mag.max()), 1e-6)
 
-    n_panels = 5 if Gamma is not None else 4
-    fig, axes = plt.subplots(1, n_panels, figsize=(4 * n_panels, 12))
+    fig, axes = plt.subplots(1, 4, figsize=(16, 12))
 
     im0 = axes[0].imshow(phi.T, origin="lower", cmap="RdBu", vmin=0, vmax=1)
     axes[0].set_title("φ (oil=1, water=0)")
@@ -93,11 +92,6 @@ def plot_fields(f, phi, Gamma=None, interior=None, title=None):
     im3 = axes[3].imshow(vel_mag.T, origin="lower", cmap="hot", vmin=0, vmax=vm)
     axes[3].set_title(f"|u| (max={vm:.2e})")
     plt.colorbar(im3, ax=axes[3], shrink=0.5)
-
-    if Gamma is not None:
-        im4 = axes[4].imshow(Gamma.T, origin="lower", cmap="magma", vmin=0, vmax=1)
-        axes[4].set_title("Γ (surfactant coverage)")
-        plt.colorbar(im4, ax=axes[4], shrink=0.5)
 
     for ax in axes:
         ax.set_aspect("equal")

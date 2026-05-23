@@ -155,20 +155,6 @@ def setup(
         phi = phi.at[gxL+1:gxR, 0].set(phi[gxL+1:gxR, 1])
         return phi
 
-    @jit
-    def apply_gamma_bcs(Gamma):
-        # Fresh fluid at all 5 inlets — Gamma=0 (no aged interface entering).
-        # Walls: Gamma irrelevant inside (no interface), but force 0 for cleanliness.
-        # Outlet: Neumann (zero-flux) via copy from interior cell.
-        Gamma = jnp.where(wall, 0.0, Gamma)
-        Gamma = Gamma.at[gxL+1:gxR, -1].set(0.0)
-        Gamma = Gamma.at[0,  Y_USLOT_BOT:Y_USLOT_TOP].set(0.0)
-        Gamma = Gamma.at[-1, Y_USLOT_BOT:Y_USLOT_TOP].set(0.0)
-        Gamma = Gamma.at[0,  Y_LSLOT_BOT:Y_LSLOT_TOP].set(0.0)
-        Gamma = Gamma.at[-1, Y_LSLOT_BOT:Y_LSLOT_TOP].set(0.0)
-        Gamma = Gamma.at[gxL+1:gxR, 0].set(Gamma[gxL+1:gxR, 1])
-        return Gamma
-
     boundary_mask = (
         (jnp.arange(Nx)[:, None] == 0) |
         (jnp.arange(Nx)[:, None] == Nx - 1) |
@@ -201,7 +187,6 @@ def setup(
     return dict(
         wall=wall, fluid=fluid, interior=interior, opp_jnp=opp_jnp,
         apply_f_bcs=apply_f_bcs, apply_phi_bcs=apply_phi_bcs,
-        apply_gamma_bcs=apply_gamma_bcs,
         boundary_mask=boundary_mask, water_prefill=water_prefill, params=params,
     )
 
