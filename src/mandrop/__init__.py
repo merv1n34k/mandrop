@@ -48,7 +48,7 @@ def build(params=None):
 
     step = make_step(
         geo["wall"], geo["fluid"], geo["interior"], geo["opp_jnp"],
-        lat.tau_f, lat.sigma_clean, lat.sigma_eq, lat.W,
+        lat.tau_c, lat.tau_d, lat.sigma_clean, lat.sigma_eq, lat.W,
         lat.tau_ads_lu, lat.D_gamma, lat.M_ch,
         geo["apply_f_bcs"], geo["apply_phi_bcs"], geo["apply_gamma_bcs"], geo["boundary_mask"],
     )

@@ -218,7 +218,7 @@ def stream(f):
 # Step factory — closes over geometry + physical parameters
 # ---------------------------------------------------------------------------
 def make_step(wall, fluid, interior, opp_jnp,
-              tau_f, sigma_clean, sigma_eq, W, tau_ads, D_gamma, M_ch,
+              tau_c, tau_d, sigma_clean, sigma_eq, W, tau_ads, D_gamma, M_ch,
               apply_f_bcs, apply_phi_bcs, apply_gamma_bcs, boundary_mask):
     """Build the JIT step function.
 
@@ -226,7 +226,10 @@ def make_step(wall, fluid, interior, opp_jnp,
       - f: D2Q9 distributions
       - phi: phase field (0=water, 1=oil)
       - Gamma: surfactant coverage fraction [0,1] at the interface
-    Local interfacial tension: sigma(x) = sigma_clean + (sigma_eq - sigma_clean) * Gamma
+
+    Local interfacial tension: sigma(x) = sigma_clean + (sigma_eq - sigma_clean)·Gamma
+    Local relaxation time:     tau(x)   = (1-phi)·tau_d + phi·tau_c
+       (phi=0 = water/dispersed, phi=1 = oil/continuous)
     """
     inv_tau_ads = 1.0 / tau_ads
 
@@ -239,9 +242,10 @@ def make_step(wall, fluid, interior, opp_jnp,
         return 2.0 * beta_local * phi * (1.0 - phi) * (1.0 - 2.0 * phi) - kappa_local * lap_phi
 
     @jit
-    def forcing_guo(ux, uy, Fx, Fy):
+    def forcing_guo(ux, uy, Fx, Fy, tau_local):
         eu = ux[..., None] * ex_jnp + uy[..., None] * ey_jnp
-        return (1.0 - 0.5 / tau_f) * w * (
+        factor = (1.0 - 0.5 / tau_local)[..., None]
+        return factor * w * (
             (ex_jnp - ux[..., None]) * Fx[..., None] / cs2
             + (ey_jnp - uy[..., None]) * Fy[..., None] / cs2
             + eu / cs2 ** 2 * (ex_jnp * Fx[..., None] + ey_jnp * Fy[..., None])
@@ -256,11 +260,12 @@ def make_step(wall, fluid, interior, opp_jnp,
         Gamma = apply_gamma_bcs(Gamma)
 
         sigma_local = sigma_clean + (sigma_eq - sigma_clean) * Gamma
-        beta_local = 3.0 * sigma_local / W
+        beta_local  = 3.0 * sigma_local / W
         kappa_local = 6.0 * sigma_local * W
+        tau_local   = (1.0 - phi) * tau_d + phi * tau_c
 
         lap_phi = compute_laplacian(phi)
-        gx, gy = compute_gradient(phi)
+        gx, gy  = compute_gradient(phi)
         mu = chem_potential(phi, lap_phi, beta_local, kappa_local)
 
         Fx = mu * gx
@@ -275,8 +280,8 @@ def make_step(wall, fluid, interior, opp_jnp,
         uy = jnp.where(wall, 0.0, uy)
 
         feq = feq_fn(rho, ux, uy)
-        Fi = forcing_guo(ux, uy, Fx, Fy)
-        f_collided = f - (f - feq) / tau_f + Fi
+        Fi  = forcing_guo(ux, uy, Fx, Fy, tau_local)
+        f_collided = f - (f - feq) / tau_local[..., None] + Fi
         f = jnp.where(fluid[..., None], f_collided, f)
 
         f = stream(f)
