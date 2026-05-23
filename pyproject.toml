@@ -18,4 +18,4 @@ build-backend = "hatchling.build"
 packages = ["src/mandrop"]
 
 [project.scripts]
-mandrop = "mandrop:main"
+mandrop = "mandrop.__main__:main"
