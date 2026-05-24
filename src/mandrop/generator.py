@@ -135,10 +135,13 @@ def setup(
     opp_jnp = jnp.array(opp)
 
     @jit
-    def apply_f_bcs(f):
-        f = zou_he_top_u(f,   gxL+1, gxR,                 -u_top_in_lu)
-        f = zou_he_left_u(f,  Y_USLOT_BOT, Y_USLOT_TOP,   +u_water_side_in_lu)
-        f = zou_he_right_u(f, Y_USLOT_BOT, Y_USLOT_TOP,   -u_water_side_in_lu)
+    def apply_f_bcs(f, water_scale=1.0):
+        # water_scale ∈ [0, 1] lets us ramp water inlets at startup to avoid
+        # the dripping→jetting hysteretic lock-in (Utada 2007). Oil stays
+        # at full target from step 1.
+        f = zou_he_top_u(f,   gxL+1, gxR,                 -water_scale * u_top_in_lu)
+        f = zou_he_left_u(f,  Y_USLOT_BOT, Y_USLOT_TOP,   +water_scale * u_water_side_in_lu)
+        f = zou_he_right_u(f, Y_USLOT_BOT, Y_USLOT_TOP,   -water_scale * u_water_side_in_lu)
         f = zou_he_left_u(f,  Y_LSLOT_BOT, Y_LSLOT_TOP,   +u_oil_in_lu)
         f = zou_he_right_u(f, Y_LSLOT_BOT, Y_LSLOT_TOP,   -u_oil_in_lu)
         f = zou_he_bottom(f,  gxL+1, gxR,                 rho_out)

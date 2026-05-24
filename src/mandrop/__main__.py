@@ -108,6 +108,7 @@ def main():
         step, f0, phi0, Gamma0, interior, p_geo,
         chunk_size=chunk_size, n_chunks=999_999,
         on_chunk=update_plots, verbose=False,
+        warmup_steps=5000,   # ramp water inlets over first 5k steps to dodge jet lock-in
     )
 
     print(f"\nStopped at step {total_steps}.")

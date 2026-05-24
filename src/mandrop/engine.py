@@ -252,7 +252,7 @@ def make_step(wall, fluid, interior, opp_jnp,
         )
 
     @jit
-    def step(state):
+    def step(state, water_scale=1.0):
         f, phi, Gamma = state
 
         phi = apply_phi_bcs(phi)
@@ -286,7 +286,7 @@ def make_step(wall, fluid, interior, opp_jnp,
 
         f = stream(f)
         f = apply_bounce_back(f)
-        f = apply_f_bcs(f)
+        f = apply_f_bcs(f, water_scale)
 
         lap_mu = compute_laplacian(mu)
         div_flux = compute_divergence(phi * ux, phi * uy)

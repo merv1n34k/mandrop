@@ -10,11 +10,16 @@ from mandrop.generator import boundary_stats
 
 
 def run(step, f0, phi0, Gamma0, interior, params,
-        chunk_size=500, n_chunks=60, on_chunk=None, verbose=True):
+        chunk_size=500, n_chunks=60, on_chunk=None, verbose=True,
+        warmup_steps=0):
     """Run simulation in chunks with JIT warmup and diagnostics.
 
     Tracks φ at the (probe_x, probe_y) location from `params` every step,
     so droplet-generation frequency can be measured downstream of the throat.
+
+    If `warmup_steps > 0`, ramps the *water* inlet velocities linearly from
+    0 to full target over that many steps to avoid hysteretic dripping→jetting
+    lock-in (Utada 2007). Oil inlet stays at full target throughout.
 
     on_chunk(f, phi, Gamma, probe_history, step_num, dt) is called after each
     chunk. Return False from on_chunk to stop early.
@@ -24,14 +29,14 @@ def run(step, f0, phi0, Gamma0, interior, params,
     probe_x = params["probe_x"]
     probe_y = params["probe_y"]
 
-    def scan_body(state, _):
-        new_state = step(state)
+    def scan_body(state, water_scale):
+        new_state = step(state, water_scale)
         _, phi_new, _ = new_state
         return new_state, phi_new[probe_x, probe_y]
 
     # JIT warmup
     state = (f0, phi0, Gamma0)
-    state, _ = lax.scan(scan_body, state, None, length=1)
+    state, _ = lax.scan(scan_body, state, jnp.ones(1))
     state[0].block_until_ready()
     if verbose:
         print("JIT compiled.")
@@ -41,9 +46,16 @@ def run(step, f0, phi0, Gamma0, interior, params,
     t0 = time.time()
     t_chunk = t0
     chunk = 0
+    ramp_denom = max(warmup_steps, 1)
 
     while chunk < n_chunks:
-        state, probe_history = lax.scan(scan_body, state, None, length=chunk_size)
+        step_start = chunk * chunk_size
+        # Per-step water_scale ramps linearly 0→1 over warmup_steps, then stays at 1.
+        water_scales = jnp.clip(
+            jnp.arange(step_start, step_start + chunk_size, dtype=jnp.float64) / ramp_denom,
+            0.0, 1.0,
+        )
+        state, probe_history = lax.scan(scan_body, state, water_scales)
         f_c, phi_c, Gamma_c = state
         f_c.block_until_ready()
 
