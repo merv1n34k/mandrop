@@ -16,7 +16,7 @@ import subprocess
 from pathlib import Path
 
 
-DPI    = 300
+DPI    = 150   # 150 dpi at figsize=(20,12) → 3000×1800 PNG, ~4× faster than 300
 FPS    = 24
 CRF    = 18
 
@@ -54,8 +54,9 @@ class FrameSaver:
 def frames_to_mp4(frames_dir: str | Path, out_path: str | Path) -> Path:
     """Assemble PNG sequence into MP4 via ffmpeg, with locked defaults.
 
-    Raises FileNotFoundError if ffmpeg is missing,
-    or subprocess.CalledProcessError if the encode fails.
+    Uses ffmpeg's glob pattern matcher so frame numbers don't have to be
+    contiguous from 0 (FrameSaver names by step_num, e.g. frame_..._000000200.png).
+    Prints ffmpeg stderr on failure for diagnosability.
     """
     if shutil.which("ffmpeg") is None:
         raise FileNotFoundError(
@@ -69,12 +70,22 @@ def frames_to_mp4(frames_dir: str | Path, out_path: str | Path) -> Path:
     cmd = [
         "ffmpeg", "-y",
         "-framerate", str(FPS),
-        "-i", str(frames_dir / "frame_%09d.png"),
+        "-pattern_type", "glob",
+        "-i", str(frames_dir / "frame_*.png"),
         "-c:v", "libx264",
         "-pix_fmt", "yuv420p",
+        # libx264 requires even dimensions; round down per dimension.
+        "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
         "-crf", str(CRF),
         "-preset", "medium",
         str(out_path),
     ]
-    subprocess.run(cmd, check=True, capture_output=True, text=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        # Surface the real error rather than swallowing it
+        raise RuntimeError(
+            f"ffmpeg exit {proc.returncode}\n"
+            f"cmd: {' '.join(cmd)}\n"
+            f"stderr:\n{proc.stderr}"
+        )
     return out_path
