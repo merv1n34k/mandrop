@@ -189,16 +189,21 @@ def relax_phi(phi, apply_phi_bcs, sigma_eq, W, M_ch, n_steps=50):
     return jnp.clip(phi, 0.0, 1.0)
 
 
-def init_state(Nx, Ny, rho0, apply_phi_bcs,
-               sigma, W, M_ch, water_prefill=None, n_relax=50):
+def init_state(Nx, Ny, rho0, apply_phi_bcs, apply_gamma_bcs,
+               sigma_eq, W, M_ch, water_prefill=None, n_relax=50):
     f0 = feq_fn(jnp.ones((Nx, Ny)) * rho0, jnp.zeros((Nx, Ny)), jnp.zeros((Nx, Ny)))
     phi0 = jnp.ones((Nx, Ny))
     if water_prefill is not None:
         phi0 = jnp.where(water_prefill, 0.0, phi0)
     phi0 = apply_phi_bcs(phi0)
     # Pre-relax phi to natural tanh profile so a real interface band exists at t=0.
-    phi0 = relax_phi(phi0, apply_phi_bcs, sigma, W, M_ch, n_steps=n_relax)
-    return f0, phi0
+    phi0 = relax_phi(phi0, apply_phi_bcs, sigma_eq, W, M_ch, n_steps=n_relax)
+    # Existing interface (post-relaxation) is aged (Γ=1); bulk Γ=0 so any new
+    # interface formed during the run inherits bare coverage.
+    interface_t0 = (phi0 > 0.05) & (phi0 < 0.95)
+    Gamma0 = jnp.where(interface_t0, 1.0, 0.0)
+    Gamma0 = apply_gamma_bcs(Gamma0)
+    return f0, phi0, Gamma0
 
 
 @jit
@@ -213,28 +218,28 @@ def stream(f):
 # Step factory — closes over geometry + physical parameters
 # ---------------------------------------------------------------------------
 def make_step(wall, fluid, interior, opp_jnp,
-              tau_c, tau_d, sigma, W, M_ch,
-              apply_f_bcs, apply_phi_bcs, boundary_mask):
+              tau_c, tau_d, sigma_clean, sigma_eq, W, tau_ads, D_gamma, M_ch,
+              apply_f_bcs, apply_phi_bcs, apply_gamma_bcs, boundary_mask):
     """Build the JIT step function.
 
-    State is a 2-tuple (f, phi):
+    State is a 3-tuple (f, phi, Gamma):
       - f: D2Q9 distributions
       - phi: phase field (0=water, 1=oil)
+      - Gamma: surfactant coverage fraction [0,1] at the interface
 
-    Uses a single equilibrium σ (no dynamic-IFT model). Local relaxation time
-    interpolates between phases: tau(x) = (1-phi)·tau_d + phi·tau_c
-    (phi=0 = water/dispersed, phi=1 = oil/continuous).
+    Local interfacial tension: sigma(x) = sigma_clean + (sigma_eq - sigma_clean)·Gamma
+    Local relaxation time:     tau(x)   = (1-phi)·tau_d + phi·tau_c
+       (phi=0 = water/dispersed, phi=1 = oil/continuous)
     """
-    beta  = 3.0 * sigma / W
-    kappa = 6.0 * sigma * W
+    inv_tau_ads = 1.0 / tau_ads
 
     @jit
     def apply_bounce_back(f):
         return jnp.where(wall[..., None], f[:, :, opp_jnp], f)
 
     @jit
-    def chem_potential(phi, lap_phi):
-        return 2.0 * beta * phi * (1.0 - phi) * (1.0 - 2.0 * phi) - kappa * lap_phi
+    def chem_potential(phi, lap_phi, beta_local, kappa_local):
+        return 2.0 * beta_local * phi * (1.0 - phi) * (1.0 - 2.0 * phi) - kappa_local * lap_phi
 
     @jit
     def forcing_guo(ux, uy, Fx, Fy, tau_local):
@@ -248,16 +253,20 @@ def make_step(wall, fluid, interior, opp_jnp,
 
     @jit
     def step(state):
-        f, phi = state
+        f, phi, Gamma = state
 
         phi = apply_phi_bcs(phi)
         phi = jnp.clip(phi, 0.0, 1.0)
+        Gamma = apply_gamma_bcs(Gamma)
 
-        tau_local = (1.0 - phi) * tau_d + phi * tau_c
+        sigma_local = sigma_clean + (sigma_eq - sigma_clean) * Gamma
+        beta_local  = 3.0 * sigma_local / W
+        kappa_local = 6.0 * sigma_local * W
+        tau_local   = (1.0 - phi) * tau_d + phi * tau_c
 
         lap_phi = compute_laplacian(phi)
         gx, gy  = compute_gradient(phi)
-        mu = chem_potential(phi, lap_phi)
+        mu = chem_potential(phi, lap_phi, beta_local, kappa_local)
 
         Fx = mu * gx
         Fy = mu * gy
@@ -287,6 +296,16 @@ def make_step(wall, fluid, interior, opp_jnp,
         phi = apply_phi_bcs(phi)
         phi = jnp.clip(phi, 0.0, 1.0)
 
-        return (f, phi)
+        # Gamma evolution: advection + small diffusion + interfacial adsorption source
+        interface_mask = (phi > 0.05) & (phi < 0.95)
+        div_gamma_flux = compute_divergence(Gamma * ux, Gamma * uy)
+        lap_gamma = compute_laplacian(Gamma)
+        gamma_source = jnp.where(interface_mask, (1.0 - Gamma) * inv_tau_ads, 0.0)
+        gamma_update = -div_gamma_flux + D_gamma * lap_gamma + gamma_source
+        Gamma = Gamma + jnp.where(interior, gamma_update, 0.0)
+        Gamma = apply_gamma_bcs(Gamma)
+        Gamma = jnp.clip(Gamma, 0.0, 1.0)
+
+        return (f, phi, Gamma)
 
     return step
