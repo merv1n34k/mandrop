@@ -1,19 +1,20 @@
 """Real-time LBM flow-focusing simulation with live droplet stats.
 
-Run with:  uv run mandrop
-or:        uv run python -m mandrop
+Run with:  uv run mandrop          # live preview, no movie
+       or: uv run mandrop --movie  # also save mandrop_<timestamp>.mp4
 
-To save a movie of the run:
-    MANDROP_FRAMES_DIR=frames/run01 uv run mandrop
-On exit (or Ctrl+C), frames in that directory are assembled into
-`frames/run01/run.mp4` via ffmpeg (must be on PATH).
+Movie defaults are locked: 300 DPI frames → 24 FPS H.264 MP4, no tuning.
+PNG frames are kept in /tmp during the run and deleted after assembly.
 
 To study chemistry: edit `params.physical.*`. To switch resolution:
 edit `params.sim.resolution_um`.
 """
 
-import os
+import argparse
+import shutil
 import signal
+import tempfile
+from datetime import datetime
 from pathlib import Path
 
 import jax
@@ -28,6 +29,13 @@ from mandrop.movie import FrameSaver, frames_to_mp4
 
 
 def main():
+    cli = argparse.ArgumentParser(prog="mandrop")
+    cli.add_argument("--movie", action="store_true",
+                     help="Record a timestamped MP4 of the run (mandrop_YYYYMMDD_HHMMSS.mp4 "
+                          "in cwd). Frames are captured at 300 DPI to /tmp and assembled into "
+                          "24 fps H.264 MP4 on exit. PNGs are deleted after assembly.")
+    args = cli.parse_args()
+
     params = Params(
         physical=PhysicalParams(),                   # default = real chip op point
         sim     =SimulationParams(resolution_um=1.0),  # 1 µm/lu for production
@@ -44,10 +52,18 @@ def main():
 
     chunk_size = 200
 
-    # Optional movie capture — set MANDROP_FRAMES_DIR to enable.
-    saver = FrameSaver(os.environ.get("MANDROP_FRAMES_DIR"))
-    if saver.is_active():
-        print(f"Movie capture enabled → {saver.out_dir}")
+    # Optional movie capture via --movie. Frames go to /tmp; assembled MP4
+    # lands in cwd; PNGs deleted after assembly.
+    if args.movie:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        movie_path = Path.cwd() / f"mandrop_{timestamp}.mp4"
+        tmp_frames_dir = Path(tempfile.mkdtemp(prefix="mandrop_frames_"))
+        saver = FrameSaver(tmp_frames_dir)
+        print(f"Movie capture → {movie_path} (frames in {tmp_frames_dir})")
+    else:
+        movie_path = None
+        tmp_frames_dir = None
+        saver = FrameSaver(None)
 
     # Graceful shutdown
     running = [True]
@@ -129,16 +145,17 @@ def main():
 
     print(f"\nStopped at step {total_steps}.")
 
-    if saver.is_active() and saver.count > 0:
-        mp4_path = saver.out_dir / "run.mp4"
-        print(f"Assembling {saver.count} frames into {mp4_path} via ffmpeg...")
+    if args.movie and saver.count > 0:
+        print(f"Assembling {saver.count} frames at 24 fps → {movie_path}")
         try:
-            frames_to_mp4(saver.out_dir, mp4_path, fps=30)
-            print(f"Movie saved: {mp4_path}")
+            frames_to_mp4(tmp_frames_dir, movie_path)
+            print(f"Saved: {movie_path}")
         except FileNotFoundError as e:
             print(f"Skipping mp4 assembly: {e}")
         except Exception as e:
             print(f"ffmpeg failed: {e}")
+        finally:
+            shutil.rmtree(tmp_frames_dir, ignore_errors=True)
 
     plt.ioff(); plt.show()
 
