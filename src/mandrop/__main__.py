@@ -1,12 +1,20 @@
 """Real-time LBM flow-focusing simulation with live droplet stats.
 
-Run with:  uv run python -m mandrop
+Run with:  uv run mandrop
+or:        uv run python -m mandrop
 
-To study chemistry: edit `params.physical.*` (sigma, surfactant kinetics,
-flow rates). To switch resolution: edit `params.sim.resolution_um`.
+To save a movie of the run:
+    MANDROP_FRAMES_DIR=frames/run01 uv run mandrop
+On exit (or Ctrl+C), frames in that directory are assembled into
+`frames/run01/run.mp4` via ffmpeg (must be on PATH).
+
+To study chemistry: edit `params.physical.*`. To switch resolution:
+edit `params.sim.resolution_um`.
 """
 
+import os
 import signal
+from pathlib import Path
 
 import jax
 import jax.numpy as jnp
@@ -16,6 +24,7 @@ from mandrop import (
     Params, PhysicalParams, SimulationParams,
     build, run, droplet_stats, compute_macros,
 )
+from mandrop.movie import FrameSaver, frames_to_mp4
 
 
 def main():
@@ -34,6 +43,11 @@ def main():
     print(params.summary())
 
     chunk_size = 200
+
+    # Optional movie capture — set MANDROP_FRAMES_DIR to enable.
+    saver = FrameSaver(os.environ.get("MANDROP_FRAMES_DIR"))
+    if saver.is_active():
+        print(f"Movie capture enabled → {saver.out_dir}")
 
     # Graceful shutdown
     running = [True]
@@ -101,6 +115,8 @@ def main():
         fig.suptitle(f"step {step_num}  |  {mlups:.1f} MLUPS  |  drops {drops['n_drops']} @ {drops['d_mean_um']:.0f} µm  |  f={drops['freq_Hz']:.0f} Hz", fontsize=12)
         fig.canvas.draw_idle(); fig.canvas.flush_events()
 
+        saver.snap(fig, step_num)
+
         if not running[0] or not plt.fignum_exists(fig.number):
             return False
 
@@ -112,6 +128,18 @@ def main():
     )
 
     print(f"\nStopped at step {total_steps}.")
+
+    if saver.is_active() and saver.count > 0:
+        mp4_path = saver.out_dir / "run.mp4"
+        print(f"Assembling {saver.count} frames into {mp4_path} via ffmpeg...")
+        try:
+            frames_to_mp4(saver.out_dir, mp4_path, fps=30)
+            print(f"Movie saved: {mp4_path}")
+        except FileNotFoundError as e:
+            print(f"Skipping mp4 assembly: {e}")
+        except Exception as e:
+            print(f"ffmpeg failed: {e}")
+
     plt.ioff(); plt.show()
 
 
