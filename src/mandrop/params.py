@@ -73,7 +73,6 @@ class LatticeParams:
     D_gamma:     float
     rho_phys:    float        # reference physical density used in unit conversions
     rho0:    float = 1.0
-    rho_out: float = 0.9995
 
     @property
     def p_lu_to_pa(self) -> float:

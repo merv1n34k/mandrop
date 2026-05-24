@@ -14,7 +14,8 @@ import jax.numpy as jnp
 from jax import jit
 
 from mandrop.engine import (
-    opp, zou_he_top, zou_he_bottom, zou_he_left, zou_he_right,
+    opp, zou_he_top, zou_he_bottom, zou_he_bottom_extrapolated,
+    zou_he_left, zou_he_right,
     zou_he_top_u, zou_he_left_u, zou_he_right_u,
     compute_macros,
 )
@@ -46,7 +47,6 @@ def setup(
     u_top_in_lu=0.005,
     u_water_side_in_lu=0.010,
     u_oil_in_lu=0.0375,
-    rho_out=0.9995,
 ):
     """Build wall mask, BC closures, and masks for the DXF geometry.
 
@@ -62,7 +62,6 @@ def setup(
         u_top_in_lu:        downward inflow at top central water inlet (lu/ts).
         u_water_side_in_lu: inflow at upper L+R water slots (lu/ts, each side).
         u_oil_in_lu:        inflow at lower L+R oil slots (lu/ts, each side).
-        rho_out:            pressure BC at the outlet (bottom).
     """
     dx_mm = resolution_um / 1000.0
     nodes_per_mm = 1.0 / dx_mm
@@ -144,7 +143,9 @@ def setup(
         f = zou_he_right_u(f, Y_USLOT_BOT, Y_USLOT_TOP,   -water_scale * u_water_side_in_lu)
         f = zou_he_left_u(f,  Y_LSLOT_BOT, Y_LSLOT_TOP,   +u_oil_in_lu)
         f = zou_he_right_u(f, Y_LSLOT_BOT, Y_LSLOT_TOP,   -u_oil_in_lu)
-        f = zou_he_bottom(f,  gxL+1, gxR,                 rho_out)
+        # Outlet anchored at rho=1.0 (zero gauge, matches bulk reference).
+        # Removes the artificial "suction" of the previous rho_out=0.9995.
+        f = zou_he_bottom(f,  gxL+1, gxR, 1.0)
         return f
 
     @jit
@@ -197,7 +198,7 @@ def setup(
         Y_USLOT_BOT=Y_USLOT_BOT, Y_USLOT_TOP=Y_USLOT_TOP,
         Y_LSLOT_BOT=Y_LSLOT_BOT, Y_LSLOT_TOP=Y_LSLOT_TOP,
         u_top_in_lu=u_top_in_lu, u_water_side_in_lu=u_water_side_in_lu,
-        u_oil_in_lu=u_oil_in_lu, rho_out=rho_out,
+        u_oil_in_lu=u_oil_in_lu,
         probe_x=probe_x, probe_y=probe_y,
     )
 

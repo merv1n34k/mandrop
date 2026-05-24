@@ -105,6 +105,27 @@ def zou_he_bottom(f, x_start, x_end, rho_target):
     return f
 
 
+def zou_he_bottom_extrapolated(f, x_start, x_end):
+    """Outflow BC at y=0 with ρ extrapolated *per cell* from y=1.
+
+    The standard zou_he_bottom enforces a uniform rho_target across the whole
+    outlet face. When the interior velocity profile is non-uniform (Poiseuille-
+    like at the throat exit), uniform-ρ + non-uniform u creates a localized
+    suction at the channel center that yanks droplets in. This version copies
+    the local ρ from y=1 per x cell, removing the suction artifact and
+    allowing each cell to outflow at whatever rate satisfies local momentum.
+    """
+    f_s = f[x_start:x_end, 0, :]
+    # Per-cell ρ target = ρ extrapolated from y=1
+    rho_t = jnp.sum(f[x_start:x_end, 1, :], axis=-1)
+    uy_t = 1.0 - (f_s[:, 0] + f_s[:, 1] + f_s[:, 3]
+                   + 2.0 * (f_s[:, 4] + f_s[:, 7] + f_s[:, 8])) / rho_t
+    f = f.at[x_start:x_end, 0, 2].set(f_s[:, 4] + (2.0 / 3.0) * rho_t * uy_t)
+    f = f.at[x_start:x_end, 0, 5].set(f_s[:, 7] - 0.5 * (f_s[:, 1] - f_s[:, 3]) + (1.0 / 6.0) * rho_t * uy_t)
+    f = f.at[x_start:x_end, 0, 6].set(f_s[:, 8] + 0.5 * (f_s[:, 1] - f_s[:, 3]) + (1.0 / 6.0) * rho_t * uy_t)
+    return f
+
+
 def zou_he_left(f, y_start, y_end, rho_target):
     """Pressure BC at x=0, y in [y_start, y_end). Flow enters in +x."""
     rho_t = rho_target

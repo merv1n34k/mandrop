@@ -43,7 +43,6 @@ def build(params=None):
         u_top_in_lu        = lat.u_top_in_lu,
         u_water_side_in_lu = lat.u_water_side_in_lu,
         u_oil_in_lu        = lat.u_oil_in_lu,
-        rho_out            = lat.rho_out,
     )
 
     step = make_step(
