@@ -19,6 +19,74 @@ ey_jnp = jnp.array(ey, dtype=jnp.float64)
 
 
 # ---------------------------------------------------------------------------
+# MRT (Multi-Relaxation-Time) collision support for D2Q9
+# Lallemand & Luo, Phys. Rev. E 61, 6546 (2000)
+# Moment order: rho, e, eps, jx, qx, jy, qy, pxx, pxy
+# ---------------------------------------------------------------------------
+_M_mrt = jnp.array([
+    [ 1,  1,  1,  1,  1,  1,  1,  1,  1],  # rho (density)
+    [-4, -1, -1, -1, -1,  2,  2,  2,  2],  # e   (energy)
+    [ 4, -2, -2, -2, -2,  1,  1,  1,  1],  # eps (energy squared)
+    [ 0,  1,  0, -1,  0,  1, -1, -1,  1],  # jx  (x-momentum = ex)
+    [ 0, -2,  0,  2,  0,  1, -1, -1,  1],  # qx  (x-energy-flux)
+    [ 0,  0,  1,  0, -1,  1,  1, -1, -1],  # jy  (y-momentum = ey)
+    [ 0,  0, -2,  0,  2,  1,  1, -1, -1],  # qy  (y-energy-flux)
+    [ 0,  1, -1,  1, -1,  0,  0,  0,  0],  # pxx (diagonal stress = ex^2-ey^2)
+    [ 0,  0,  0,  0,  0,  1, -1,  1, -1],  # pxy (off-diagonal stress = ex*ey)
+], dtype=jnp.float64)
+_Minv_mrt = jnp.linalg.inv(_M_mrt)
+
+# Per-moment relaxation rates. Conserved moments (rho, jx, jy) get ω=1 (no
+# effect; conserved). Shear-stress moments (pxx, pxy) use ω_ν = 1/τ_local
+# (the physical viscosity rate). Bulk-viscosity (e, eps) and heat-flux
+# (qx, qy) moments use tunable rates that are typically slightly over-
+# relaxed for stability (Lallemand-Luo recommend 1.4 / 1.2).
+_OMEGA_BULK = 1.4
+_OMEGA_HEAT = 1.2
+
+
+@jit
+def mrt_collide(f, feq, tau_local):
+    """MRT collision: transform to moments, relax per moment, transform back.
+
+    f, feq : shape (Nx, Ny, 9)
+    tau_local : shape (Nx, Ny), per-cell BGK τ (drives shear-moment relaxation).
+
+    Returns post-collision f. Use the same Guo forcing as BGK after this.
+
+    In stable-BGK regimes MRT reproduces BGK to within numerical noise; the
+    advantage shows up at τ → 0.5 and at high density / viscosity gradients
+    where BGK NaN's. With τ(φ) varying per cell, only the two shear-stress
+    relaxation rates are spatial; bulk/heat rates are global constants.
+    """
+    omega_nu = 1.0 / tau_local  # shape (Nx, Ny)
+
+    # Project to moment space
+    m    = jnp.einsum('ki,xyi->xyk', _M_mrt, f)
+    m_eq = jnp.einsum('ki,xyi->xyk', _M_mrt, feq)
+
+    # Diagonal of per-cell relaxation matrix Λ (shape (Nx, Ny, 9))
+    ones = jnp.ones_like(omega_nu)
+    omegas = jnp.stack([
+        ones,                  # rho  — conserved, ω irrelevant
+        _OMEGA_BULK * ones,    # e
+        _OMEGA_BULK * ones,    # eps
+        ones,                  # jx   — conserved
+        _OMEGA_HEAT * ones,    # qx
+        ones,                  # jy   — conserved
+        _OMEGA_HEAT * ones,    # qy
+        omega_nu,              # pxx  — shear (τ-dependent)
+        omega_nu,              # pxy  — shear (τ-dependent)
+    ], axis=-1)
+
+    # Relax in moment space
+    m_post = m - omegas * (m - m_eq)
+
+    # Transform back to populations
+    return jnp.einsum('ik,xyk->xyi', _Minv_mrt, m_post)
+
+
+# ---------------------------------------------------------------------------
 # JIT-compiled operators (lattice-only, no geometry dependence)
 # ---------------------------------------------------------------------------
 @jit
@@ -302,7 +370,8 @@ def make_step(wall, fluid, interior, opp_jnp,
 
         feq = feq_fn(rho, ux, uy)
         Fi  = forcing_guo(ux, uy, Fx, Fy, tau_local)
-        f_collided = f - (f - feq) / tau_local[..., None] + Fi
+        # MRT collision (better stability than BGK at low τ / high gradients)
+        f_collided = mrt_collide(f, feq, tau_local) + Fi
         f = jnp.where(fluid[..., None], f_collided, f)
 
         f = stream(f)
