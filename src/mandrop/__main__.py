@@ -1,5 +1,6 @@
 """LBM flow-focusing simulation for water-in-oil droplet generation."""
 
+import argparse
 import signal
 
 import jax
@@ -8,6 +9,7 @@ import matplotlib.pyplot as plt
 
 from mandrop.engine import make_step, compute_macros, init_state
 from mandrop.generator import setup
+from mandrop.movie import MovieRecorder
 from mandrop.run import run
 
 # ---------------------------------------------------------------------------
@@ -59,6 +61,14 @@ F_OUT = -1.0
 # Main entry point
 # ---------------------------------------------------------------------------
 def main():
+    parser = argparse.ArgumentParser(prog="mandrop", description=__doc__)
+    parser.add_argument(
+        "--movie", nargs="?", const="", default=None, metavar="PATH",
+        help="record the live display to mp4 (default: mandrop_<timestamp>.mp4)",
+    )
+    args = parser.parse_args()
+    recorder = MovieRecorder(path=args.movie or None) if args.movie is not None else None
+
     geo = setup(
         resolution_um    =RESOLUTION_UM,
         outlet_extra_mm  =OUTLET_EXTRA_MM,
@@ -164,17 +174,23 @@ def main():
         axes[4].set_title(f"Γ (⟨Γ⟩_iface={gamma_mean_iface:.2f})")
 
         fig.suptitle(f"Step {step_num}  |  {mlups:.1f} MLUPS", fontsize=12)
-        fig.canvas.draw_idle()
+        fig.canvas.draw()
         fig.canvas.flush_events()
+        if recorder is not None:
+            recorder.capture(fig)
 
         if not running[0] or not plt.fignum_exists(fig.number):
             return False
 
-    _, _, _, total_steps = run(
-        step, f0, phi0, Gamma0, interior, geo["params"],
-        chunk_size=chunk_size, n_chunks=999_999,
-        on_chunk=update_plots, verbose=False,
-    )
+    try:
+        _, _, _, total_steps = run(
+            step, f0, phi0, Gamma0, interior, geo["params"],
+            chunk_size=chunk_size, n_chunks=999_999,
+            on_chunk=update_plots, verbose=False,
+        )
+    finally:
+        if recorder is not None:
+            recorder.close()
 
     elapsed_msg = f"\nStopped at step {total_steps}."
     print(elapsed_msg)
