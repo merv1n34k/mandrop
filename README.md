@@ -1,5 +1,8 @@
 # mandrop
 
+> [!Warning]
+> The project is no longer supported, use project at your own risk. The replacement software is TBA.
+
 Lattice Boltzmann Method (LBM) simulation for water-in-oil droplet generation using JAX.
 
 Phase-field Cahn-Hilliard model coupled with D2Q9 LBM. Bounce-back walls, Zou-He pressure inlet/outlet, Guo forcing for surface tension.
